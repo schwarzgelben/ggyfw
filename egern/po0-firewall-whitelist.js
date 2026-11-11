@@ -1,42 +1,39 @@
 /*
- * po0 防火墙自动加白 · Egern 原生脚本
+ * GGY (咕咕云) 防火墙自动加白 · Egern 原生脚本
  *
- * Egern 的脚本运行模型与 Surge 系不同：入口是 `export default async function(ctx)`，
- * 且没有 $httpClient/$persistentStore/$notification/$done 等全局，只能用 ctx.* API。
- * 因此 Egern 不复用共享脚本 scripts/po0-firewall-whitelist.js，而是本独立文件。
- * 两者业务逻辑保持一致——改动加白/槽位/通知策略时请同步修改两份。
+ * 行为：GET https://www.guguyun.com/cany_tencentecs/firewall/whitelist?token=<token>
+ * 调用咕咕云魔方插件白名单链接，将当前出口 IP 加入安全组白名单。
  *
- * 行为：POST https://124.221.69.228/api/firewall/<token>/add[?slot=N]，把本机当前
- *   出口 IP 加白。token 走 URL 路径；服务端对已在白名单的 IP 幂等；写满 5 个后按
- *   写入时间 FIFO 淘汰（带 slot 的行永不淘汰）。token 来自模块参数 tokens
- *   （ctx.env.tokens），可带 @槽位 后缀（pgnfw_xxx@0）钉固定坑位。
- * 加白粒度为 C 段（/24）：服务端把 whitelist 条目和 currentIp 归一化成
- *   x.x.x.0/24 回显，同段换 IP 不产生新写入；匹配用 sameC24() 兼容混杂格式。
+ * 注意：必须配置直连规则 domain: www.guguyun.com -> DIRECT
  */
 
-const API_BASE = "https://124.221.69.228/api/firewall/"; // + <token> + "/add"
-const STORE_PREFIX = "po0_fw_";
-const HIST_WINDOW_MS = 24 * 3600 * 1000; // 📶 标记的记账窗口
+const API_BASE = "https://www.guguyun.com/cany_tencentecs/firewall/whitelist?token=";
+const STORE_PREFIX = "ggy_fw_";
 
-// tokens 分隔符兼容 , | ; 、 空白；每段可带 @槽位 后缀
+function extractToken(raw) {
+  if (!raw) return "";
+  const s = String(raw).trim();
+  const m = s.match(/[?&]token=([^&#\s]+)/);
+  if (m && m[1]) return decodeURIComponent(m[1]);
+  if (/^https?:\/\//i.test(s)) return "";
+  return s;
+}
+
 function parseTokens(raw) {
   return String(raw || "")
-    .split(/[,|;、\s]+/)
+    .split(/[,|;、\r\n\s]+/)
     .map(function (s) {
-      return s.trim();
+      return extractToken(s);
     })
     .filter(function (s) {
-      return s.indexOf("pgnfw_") === 0;
-    })
-    .map(function (s) {
-      const at = s.indexOf("@");
-      if (at === -1) return { token: s, slot: null };
-      const n = parseInt(s.slice(at + 1), 10);
-      return { token: s.slice(0, at), slot: isNaN(n) ? null : n };
+      return (
+        s.length > 0 &&
+        s !== "在此填入token" &&
+        s.indexOf("你的token") === -1
+      );
     });
 }
 
-// WiFi 有 ssid 视为非蜂窝；否则若有蜂窝载波/制式则视为蜂窝（仅用于 📶 标记）
 function onCellular(ctx) {
   try {
     const d = ctx.device || {};
@@ -48,55 +45,25 @@ function onCellular(ctx) {
   }
 }
 
-function readHistory(ctx, key) {
-  let h;
-  try {
-    h = ctx.storage.getJSON(key) || [];
-  } catch (e) {
-    h = [];
-  }
-  if (!Array.isArray(h)) h = [];
-  const cutoff = Date.now() - HIST_WINDOW_MS;
-  return h.filter(function (e) {
-    return e && e.ts > cutoff;
-  });
-}
-
 function sleep(ms) {
   return new Promise(function (resolve) {
     setTimeout(resolve, ms);
   });
 }
 
-// po0 API 偶发瞬时异常：返回裸 400（body 仅 "Error"）/ 5xx，几秒后同一
-// token 即成功。请求幂等，重试安全。规范 JSON 错误（如 token 无效）不重试。
 const HTTP_RETRY = 3;
 const HTTP_RETRY_DELAY_MS = 1500;
 
-function isRetryableServerError(status, text) {
-  if (!status) return false;
-  if (status >= 500) return true;
-  if (status >= 200 && status < 300) return false;
-  if (status === 403) return false; // 槽位冲突，重试无意义
-  try {
-    JSON.parse(text);
-    return false; // 规范 JSON 错误 = 确定性失败
-  } catch (e) {
-    return true; // 非 JSON body（如裸 "Error"）= 服务端瞬时异常
-  }
-}
-
-// ⚠️ Egern 的 ctx.http 在非 2xx 响应时会直接 throw（如
-// "HTTP error! status: 403, body: ..."），不会把 resp 交回来。
-// 必须从 error message 里把 status/body 解析出来，走统一处理，
-// 否则 403 槽位冲突分支永远走不到，只会弹裸的 HTTP error。
-async function httpPostOnce(ctx, url) {
+async function httpGetOnce(ctx, url) {
   let text = "";
   let status = 0;
   try {
-    const resp = await ctx.http.post(url, {
-      headers: { "Content-Type": "application/json" },
-      body: "",
+    const resp = await ctx.http.get(url, {
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+        Accept: "application/json, text/plain, */*",
+      },
       timeout: 15000,
     });
     status = resp.status;
@@ -110,125 +77,49 @@ async function httpPostOnce(ctx, url) {
       status = parseInt(m[1], 10);
       text = m[2] !== undefined ? m[2] : "";
     } else {
-      // 真网络层失败（超时/握手失败/被拦截），没有 HTTP status
       return { netError: msg || "网络请求失败（超时 / 握手失败 / 被拦截）" };
     }
   }
   return { status: status, text: text };
 }
 
-async function apiCall(ctx, token, slot) {
-  let url = API_BASE + encodeURIComponent(token) + "/add";
-  if (slot !== null && slot !== undefined && slot !== "") {
-    url += "?slot=" + encodeURIComponent(slot);
-  }
+async function apiCall(ctx, token) {
+  const url = API_BASE + encodeURIComponent(token);
   let r = null;
   for (let attempt = 1; attempt <= HTTP_RETRY; attempt++) {
-    r = await httpPostOnce(ctx, url);
-    if (!r.netError && !isRetryableServerError(r.status, r.text)) break;
+    r = await httpGetOnce(ctx, url);
+    if (!r.netError) {
+      try {
+        const j = JSON.parse(r.text);
+        if (j.status === 400) break; // 业务错误不重试
+      } catch (e) {}
+      if (r.status >= 200 && r.status < 500) break;
+    }
     if (attempt < HTTP_RETRY) await sleep(HTTP_RETRY_DELAY_MS * attempt);
   }
-  if (r.netError) return { error: r.netError + "（已重试 " + HTTP_RETRY + " 次）" };
-  const status = r.status;
-  const text = r.text;
+  if (r.netError) return { applied: false, error: r.netError + "（已重试 " + HTTP_RETRY + " 次）" };
+
   let data = null;
   try {
-    data = JSON.parse(text);
+    data = JSON.parse(r.text);
   } catch (e) {}
-  // 带槽位写入且本机 IP 已占用别的槽位 → 服务端 403 冲突，需去 UI 删旧槽位
-  if (status === 403) {
-    return {
-      error: "槽位冲突：本机 IP 已在其它槽位，请先去 UI 删除",
-      conflict: true,
-      currentIp: data && data.currentIp,
-    };
+
+  if (!data) return { applied: false, error: "响应非 JSON: " + String(r.text).slice(0, 80) };
+
+  if (data.status === 200) {
+    return { applied: true, msg: data.msg || "加白成功" };
+  } else {
+    return { applied: false, error: data.msg || ("加白失败 (状态 " + data.status + ")") };
   }
-  if (!data) {
-    if (status && (status < 200 || status >= 300)) {
-      return { error: "服务端 " + status + ": " + (String(text).slice(0, 80) || "无响应体") };
-    }
-    return { error: "响应异常: " + String(text).slice(0, 80) };
-  }
-  // 服务端按 C 段（/24）加白，whitelist 与 currentIp 都可能是 x.x.x.0/24
-  // whitelist 元素为 {ip, slot} 对象：记下 ip→slot 再摊平成 IP 数组
-  const raw = Array.isArray(data.whitelist) ? data.whitelist : [];
-  data.slotOf = {};
-  raw.forEach(function (e) {
-    if (e && typeof e === "object" && e.slot !== null && e.slot !== undefined) {
-      data.slotOf[e.ip] = e.slot;
-    }
-  });
-  data.whitelist = raw.map(function (e) {
-    return e && typeof e === "object" ? e.ip : e;
-  });
-  data.applied =
-    data.enabled === true &&
-    data.whitelist.some(function (ip) {
-      return sameC24(ip, data.currentIp);
-    });
-  return data;
-}
-
-// 任一侧为 /24 段时按前三段比较，两侧均为精确 IP 时要求全等
-function sameC24(a, b) {
-  if (!a || !b) return false;
-  a = String(a);
-  b = String(b);
-  if (a === b) return true;
-  if (a.slice(-3) !== "/24" && b.slice(-3) !== "/24") return false;
-  const pa = a.replace("/24", "").split(".");
-  const pb = b.replace("/24", "").split(".");
-  return (
-    pa.length === 4 && pb.length === 4 && pa[0] === pb[0] && pa[1] === pb[1] && pa[2] === pb[2]
-  );
-}
-
-async function ensure(ctx, item, index, cellular) {
-  const kvState = STORE_PREFIX + index;
-  const kvHist = STORE_PREFIX + "hist_" + index;
-  const st = await apiCall(ctx, item.token, item.slot);
-  if (st.applied) {
-    const hist = readHistory(ctx, kvHist);
-    const last = hist.length ? hist[hist.length - 1] : null;
-    if (!last || last.ip !== st.currentIp) {
-      hist.push({ ip: st.currentIp, src: cellular ? "cell" : "fixed", ts: Date.now() });
-      ctx.storage.setJSON(kvHist, hist.slice(-10));
-    }
-  }
-  return { kvState: kvState, kvHist: kvHist, slot: item.slot, st: st };
-}
-
-// 每 token 一行：不含 token，只含白名单/坑位信息；钉住的槽位标 📌，蜂窝加的 IP 标 📶
-function describe(ctx, index, c) {
-  const st = c.st;
-  const pin = c.slot !== null && c.slot !== undefined && c.slot !== "" ? " 📌" + c.slot : "";
-  const head = "#" + (index + 1) + pin + " ";
-  if (st.error) return head + "❌ " + st.error;
-  if (st.enabled === false) return head + "⚠️ 防火墙未启用";
-  if (!st.applied) return head + "❌ 加白未生效 " + ((st.whitelist && st.whitelist.length) || 0) + "/" + st.limit;
-
-  const hist = readHistory(ctx, c.kvHist);
-  const cellIps = {};
-  hist.forEach(function (e) {
-    if (e.src === "cell") cellIps[e.ip] = true;
-  });
-  const slotOf = st.slotOf || {};
-  const ips = st.whitelist
-    .map(function (ip) {
-      const slotTag = slotOf[ip] !== undefined ? " 📌" + slotOf[ip] : "";
-      return ip + slotTag + (cellIps[ip] ? " 📶" : "") + (sameC24(ip, st.currentIp) ? " ←" : "");
-    })
-    .join("\n    ");
-  return head + "✅ " + st.whitelist.length + "/" + st.limit + "\n    " + ips;
 }
 
 export default async function (ctx) {
   const tokens = parseTokens(ctx.env && ctx.env.tokens);
   if (tokens.length === 0) {
     ctx.notify({
-      title: "po0 防火墙加白",
+      title: "GGY 防火墙加白",
       subtitle: "未配置 token",
-      body: "模块参数 tokens 填入 pgnfw_ token，多个用英文逗号分割",
+      body: "模块参数 tokens 填入咕咕云 token 或分享链接，多个用英文逗号分割",
     });
     return;
   }
@@ -236,30 +127,30 @@ export default async function (ctx) {
   const cellular = onCellular(ctx);
   const results = [];
   for (let i = 0; i < tokens.length; i++) {
-    results.push(await ensure(ctx, tokens[i], i, cellular));
+    const st = await apiCall(ctx, tokens[i]);
+    results.push({ token: tokens[i], st: st, kvState: STORE_PREFIX + i });
   }
 
   let okCount = 0;
-  let exitIp = "?";
   let changed = false;
   const lines = [];
   for (let i = 0; i < results.length; i++) {
-    const st = results[i].st;
+    const item = results[i];
+    const st = item.st;
     if (st.applied) okCount++;
-    if (st.currentIp) exitIp = st.currentIp;
-    lines.push(describe(ctx, i, results[i]));
+    const short = item.token.length > 12 ? item.token.slice(0, 10) + "…" : item.token;
+    lines.push("#" + (i + 1) + " [" + short + "] " + (st.applied ? "✅ " + st.msg : "❌ " + st.error));
 
-    const state = (st.currentIp || "?") + "|" + (st.applied ? "1" : "0");
-    if (ctx.storage.get(results[i].kvState) !== state) {
-      ctx.storage.set(results[i].kvState, state);
+    const state = (st.applied ? "1" : "0") + "|" + (st.msg || st.error || "");
+    if (ctx.storage.get(item.kvState) !== state) {
+      ctx.storage.set(item.kvState, state);
       changed = true;
     }
   }
 
   const title =
-    "po0 加白 " + okCount + "/" + results.length + " · 出口 " + exitIp + (cellular ? " 📶" : "");
-  // 仅在出口 IP 或加白状态较上次变化时通知，例行 cron 保持安静
-  if (changed) {
-    ctx.notify({ title: "po0 防火墙加白", subtitle: title, body: lines.join("\n") });
+    "GGY 加白 " + okCount + "/" + results.length + (cellular ? " 📶 移动网络" : " 🌐 Wi-Fi");
+  if (changed || okCount < results.length) {
+    ctx.notify({ title: "GGY 防火墙加白", subtitle: title, body: lines.join("\n") });
   }
 }

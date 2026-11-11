@@ -1,32 +1,33 @@
-name: po0 防火墙自动加白
+name: GGY 咕咕云防火墙自动加白
 desc: |-
-  调用 po0 防火墙 API 将本机当前出口 IP 加入白名单。支持多 token（英文逗号分割），
+  调用咕咕云 (GGY) 防火墙白名单链接将本机当前出口 IP 自动加入安全组白名单。支持多 token（英文逗号分割），
   每 10 分钟 cron 自动触发，附手动刷新磁贴。安装后把下方两处 argument 的
-  tokens= 后面填上 pgnfw_ token。可选：token 后加 @槽位（如 pgnfw_xxx@0）钉固定坑位、永不被淘汰。
-category: po0
+  tokens= 后面填上咕咕云 token 或完整分享链接。
+category: 咕咕云
 icon: https://raw.githubusercontent.com/Koolson/Qure/master/IconSet/Color/Panel.png
 
 rules:
-  - IP-CIDR,124.221.69.228/32,DIRECT,no-resolve
+  - DOMAIN,www.guguyun.com,DIRECT
 
 http:
   mitm: []
 
 script-providers:
-  po0-fw:
+  ggy-fw:
     url: https://raw.githubusercontent.com/w0ven/po0fw/main/scripts/po0-firewall-whitelist.js
     interval: 86400
 
 cron:
   script:
-    - name: po0-fw
+    - name: ggy-fw
       cron: '*/10 * * * *'
       timeout: 60
       argument: tokens=
 
 tiles:
-  - name: po0-fw
+  - name: ggy-fw
     interval: 300
-    title: po0 防火墙加白
+    title: 咕咕云防火墙加白
     content: 点击刷新
     argument: tokens=
+

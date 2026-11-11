@@ -1,17 +1,18 @@
-; po0 防火墙自动加白 · Quantumult X 片段
+; GGY 咕咕云防火墙自动加白 · Quantumult X 片段
 ;
 ; QX 不支持脚本参数，token 需先写入持久化存储（二选一）：
-; 1) 在 QX 首页长按风车 → 数据中心/BoxJs，为 key `po0fw_tokens`
-;    写入 pgnfw_ token（多个英文逗号分割；可加 @槽位 如 pgnfw_xxx@0 钉固定坑位）；
+; 1) 在 QX 首页长按风车 → 数据中心/BoxJs，为 key `ggy_tokens`（或 `po0fw_tokens`）
+;    写入咕咕云 token 或完整分享链接（多个英文逗号分割）；
 ; 2) 或把脚本下载为本地文件，编辑开头的 INLINE_TOKENS 常量后引用本地路径。
 ;
 ; 安装方式（QX 无法远程订阅定时任务，必须手动放进本地配置）：
 ; - 把下面 [task_local] 的任务行加进你 QX 配置的 [task_local] 段；
-; - 可选把 [filter_local] 的 ip-cidr 行加进 [filter_local] 段（或作为「分流」引用）。
+; - 可选把 [filter_local] 的 host 行加进 [filter_local] 段（或作为「分流」引用）。
 ; 任务行内引用的远程 .js 链接是允许的，只是这一行本身必须写在本地配置里。
 
 [task_local]
-*/10 * * * * https://raw.githubusercontent.com/w0ven/po0fw/main/scripts/po0-firewall-whitelist.js, tag=po0 防火墙加白, img-url=checkmark.shield.system, enabled=true
+*/10 * * * * https://raw.githubusercontent.com/w0ven/po0fw/main/scripts/po0-firewall-whitelist.js, tag=GGY 防火墙加白, img-url=checkmark.shield.system, enabled=true
 
 [filter_local]
-ip-cidr, 124.221.69.228/32, direct, no-resolve
+host, www.guguyun.com, direct
+

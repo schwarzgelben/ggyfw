@@ -1,6 +1,6 @@
-﻿#requires -Version 5.1
+#requires -Version 5.1
 # po0fw Windows one-click installer (run from an elevated PowerShell)
-# Usage: powershell -ExecutionPolicy Bypass -File install-windows.ps1 -Tokens "pgnfw_xxx"
+# Usage: powershell -ExecutionPolicy Bypass -File install-windows.ps1 -Tokens "你的token或分享链接"
 param(
     [Parameter(Mandatory = $true)][string]$Tokens,
     [string]$RawBase = "https://raw.githubusercontent.com/w0ven/po0fw/main",

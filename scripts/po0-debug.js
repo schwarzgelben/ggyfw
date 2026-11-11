@@ -41,14 +41,14 @@ else if (typeof $notification !== "undefined") $notification.post(title, "", bod
 
 // 再测一次真实出网（走模块里的 DIRECT 规则）
 if (typeof $httpClient !== "undefined") {
-  $httpClient.post(
-    { url: "https://124.221.69.228/api/firewall/ping_test/add", timeout: 10, body: "" },
+  $httpClient.get(
+    { url: "https://www.guguyun.com/cany_tencentecs/firewall/whitelist?token=ping_test", timeout: 10 },
     function (error, response, data) {
       var line = error
         ? "HTTP ❌ " + String(error)
         : "HTTP ✅ status " + (response && (response.status || response.statusCode));
       if (typeof $notification !== "undefined")
-        $notification.post("po0fw 调试 · 出网测试", "", line);
+        $notification.post("GGY 调试 · 出网测试", "", line);
       $done({});
     }
   );

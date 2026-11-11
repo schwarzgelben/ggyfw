@@ -1,37 +1,28 @@
 # iOS 自动加白
 
-## 方案一：代理客户端脚本模块（推荐给代理用户）
+## 方案一：Surge / 代理客户端脚本模块（推荐）
 
-如果你在用 Surge / Loon / Stash / Quantumult X / Shadowrocket / Egern，直接用群友 reallinzc 的成熟模块，带面板显示、蜂窝标记、network-changed 即时触发：
+如果你在使用 Surge / Loon / Stash / Quantumult X / Shadowrocket / Egern，本仓库自带完整模块，支持面板显示、Wi-Fi / 蜂窝网络自适应、network-changed 事件即时触发 + 定时巡检：
 
-👉 **[po0fw iOS 版](https://po0fw.rlyio.com/)**（开源：[reallinzc/po0fw](https://github.com/reallinzc/po0fw)）
+👉 模块文件位于本仓库 `surge/po0-firewall-whitelist.sgmodule`，已内置直连分流规则 `DOMAIN,www.guguyun.com,DIRECT`。
 
-本仓库不重复造这个轮子。
+## 方案二：快捷指令（无需代理 App）
 
-## 方案二：快捷指令（不用任何代理 App）
+咕咕云白名单加白是一个 GET 请求，iOS 自带的「快捷指令」就能做：
 
-po0 加白只是一个 POST 请求，iOS 自带的「快捷指令」就能做：
-
-### 1. 建快捷指令
+### 1. 创建快捷指令
 
 1. 打开「快捷指令」App → 新建快捷指令
 2. 添加操作：`获取 URL 内容`
-   - URL：`https://124.221.69.228/api/firewall/pgnfw_你的token/add`
-   - 展开选项：方法选 **POST**
-3. 命名为 `po0加白`，完成
+   - URL：`https://www.guguyun.com/cany_tencentecs/firewall/whitelist?token=你的token`
+   - 展开选项：方法选 **GET**
+3. 命名为 `GGY加白`，完成
 
-点一下跑一次，返回 JSON 里能看到白名单即为成功。
+点击运行一次，返回 JSON 里包含 `status: 200` 即为成功。
 
 ### 2. 自动化触发
 
 「自动化」标签 → 新建个人自动化：
 
-- **连接 Wi-Fi 时**：触发条件选「Wi-Fi」→ 任意网络 → 运行 `po0加白`，关掉「运行前询问」
-- 可选再建一条「电池充电时」等高频事件兜底
-
-> iOS 快捷指令没有严格的「每 10 分钟」定时；Wi-Fi 切换触发已覆盖最主要的换 IP 场景（回家/到公司/开热点）。蜂窝场景频繁换 IP 的重度用户建议用方案一的代理客户端模块。
-
-### 多机器 / 固定槽位
-
-- 多台机器：在快捷指令里加多个「获取 URL 内容」操作，各填一台的 token
-- 固定槽位：URL 末尾加 `?slot=0`
+- **连接 Wi-Fi 时**：触发条件选「Wi-Fi」→ 任意网络 → 运行 `GGY加白`，关掉「运行前询问」
+- 可选再建一条「关闭飞行模式」或「充电时」等高频事件作为辅助触发。

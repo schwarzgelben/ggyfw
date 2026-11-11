@@ -227,23 +227,23 @@ footer a{color:var(--ink2)}
   <div class="wrap">
     <div class="eyebrow">Get started</div>
     <h2>安装</h2>
-    <p class="desc">token 在 po0 控制台机器详情页「防火墙」卡片 →「复制添加脚本」里，<code>pgnfw_</code> 开头那串。一台机器一个 token，请勿公开分享。</p>
+    <p class="desc">token 可在咕咕云控制台机器详情页「白名单分享链接」中获取，可直接填入 token 或完整分享链接。</p>
 
     <div class="tokenwrap">
-      <div class="tt">🔑 先粘贴你的 token</div>
+      <div class="tt">🔑 先粘贴你的 token 或分享链接</div>
       <div class="td">本页所有安装命令和模块链接会自动带上它，复制即用。只保存在你的浏览器里，不会上传。</div>
       <div class="tokenrow">
-        <input id="tok" type="text" placeholder="pgnfw_××××××××" autocomplete="off" spellcheck="false">
+        <input id="tok" type="text" placeholder="粘贴你的 token 或完整分享链接" autocomplete="off" spellcheck="false">
         <span class="state" id="tokState">未填写，命令中显示占位符</span>
       </div>
       <div class="tokentips">
         <div class="tip">
-          <div class="th">📌 家宽出口建议钉固定槽位</div>
-          <div class="tb">白名单坑满后按写入时间淘汰最旧的。家宽出口被挤掉全家都断连 —— token 后加 <code>@槽位号</code>（0–4）钉死，永不参与淘汰：<br><b>pgnfw_xxx@0</b><br>手机等流动设备别钉，靠自愈就够。推荐：家宽 <code>@0</code>，剩 4 坑给流动设备。</div>
+          <div class="th">🌐 直连分流保障</div>
+          <div class="tb">各客户端模块已内置 <code>DOMAIN,www.guguyun.com,DIRECT</code> 直连分流，确保无论是否开启代理，API 识别并加白的都是本机真实公网出口 IP。</div>
         </div>
         <div class="tip">
-          <div class="th">🖥 多台 po0 机器一次填完</div>
-          <div class="tb">每台机器 token 不同，拼起来填一处即可，设备换 IP 时所有机器同时更新：<br><b>pgnfw_机器A,pgnfw_机器B</b><br>分隔符用<b>英文逗号</b>；Shadowrocket / Quantumult X 请改用 <code>|</code> 分隔。也可混用槽位：<code>pgnfw_A@0,pgnfw_B</code>。</div>
+          <div class="th">🖥 多台机器一次填完</div>
+          <div class="tb">多台机器的 token 用<b>英文逗号</b>拼起来填一处即可（Shadowrocket / Quantumult X 也支持 <code>|</code> 分隔）：<code>token1,token2</code>。设备换 IP 时所有机器同时更新。</div>
         </div>
       </div>
     </div>
@@ -261,36 +261,34 @@ footer a{color:var(--ink2)}
     <div class="pane on" id="pane-router">
       <div class="stepline"><span class="no">1</span><h3>SSH 登录路由器，执行安装命令</h3></div>
       <div class="cb"><button class="cp">复制</button><pre>curl -sSL https://raw.githubusercontent.com/w0ven/po0fw/main/openwrt/install-openwrt.sh -o /tmp/i.sh
-PO0FW_TOKENS="<span class="tk" data-t>pgnfw_你的token</span>" sh /tmp/i.sh</pre></div>
+PO0FW_TOKENS="<span class="tk" data-t>你的token</span>" sh /tmp/i.sh</pre></div>
       <div class="stepline"><span class="no">2</span><h3>完成 —— 已自动配置双触发</h3></div>
       <div class="stepbody">cron 每 10 分钟兜底 + WAN 拨号/重连事件<b>秒级</b>加白。跑一次 <code>po0fw</code> 验证，日志在 <code>/tmp/po0fw.log</code>。</div>
-      <div class="note"><b>为什么最推荐装这里：</b>只有路由器能第一时间感知家宽重拨；且全家设备连 Wi-Fi 都被它覆盖，手机电脑就不用再各装一份。家宽出口建议钉固定槽位：token 写成 <code>pgnfw_xxx@0</code>（详见 FAQ）。</div>
+      <div class="note"><b>为什么最推荐装这里：</b>只有路由器能第一时间感知家宽重拨；且全家设备连 Wi-Fi 都被它覆盖，手机电脑就不用再各装一份。</div>
     </div>
 
     <!-- PC -->
     <div class="pane" id="pane-pc">
       <div class="stepline"><span class="no">1</span><h3>Linux / macOS —— 一条命令</h3></div>
-      <div class="cb"><button class="cp">复制</button><pre>curl -sSL https://raw.githubusercontent.com/w0ven/po0fw/main/install-linux.sh | PO0FW_TOKENS="<span class="tk" data-t>pgnfw_你的token</span>" sh</pre></div>
+      <div class="cb"><button class="cp">复制</button><pre>curl -sSL https://raw.githubusercontent.com/w0ven/po0fw/main/install-linux.sh | PO0FW_TOKENS="<span class="tk" data-t>你的token</span>" sh</pre></div>
       <div class="stepbody">root 自动注册 systemd timer；macOS / 非 root 写入 crontab，均为每 10 分钟。</div>
       <div class="stepline"><span class="no">2</span><h3>Windows —— 管理员 PowerShell</h3></div>
       <div class="cb"><button class="cp">复制</button><pre>irm https://raw.githubusercontent.com/w0ven/po0fw/main/windows/install-windows.ps1 -OutFile i.ps1
-powershell -ExecutionPolicy Bypass -File i.ps1 -Tokens "<span class="tk" data-t>pgnfw_你的token</span>"</pre></div>
+powershell -ExecutionPolicy Bypass -File i.ps1 -Tokens "<span class="tk" data-t>你的token</span>"</pre></div>
       <div class="stepbody">注册计划任务：每 10 分钟 + 网络连接事件双触发。</div>
-      <div class="note"><b>常用命令：</b><code>po0fw</code> 立即加白 · <code>po0fw status</code> 查看白名单 · 改 token 编辑 <code>/etc/po0fw.conf</code>（Windows 为 <code>%ProgramData%\po0fw\po0fw.conf</code>）。</div>
-      <p class="community-option"><b>社群客户端：</b>热心网友还提供了内置加白的 <a href="https://wiki.uuuz.de/guide/clients/po0-clash">po0-clash（Windows / macOS）</a>。可以查看使用教程，或到下方<a href="#community">社群共建</a>了解项目。现有客户端也可继续使用上面的独立脚本。</p>
+      <div class="note"><b>常用命令：</b><code>po0fw</code> 立即加白 · 改 token 编辑 <code>/etc/po0fw.conf</code>（Windows 为 <code>%ProgramData%\po0fw\po0fw.conf</code>）。</div>
     </div>
 
     <!-- 安卓 -->
     <div class="pane" id="pane-android">
       <div class="stepline"><span class="no">1</span><h3>装 MacroDroid，建第一个宏：切网即时加白</h3></div>
-      <div class="stepbody">触发器选「<b>网络连接变化</b>」（Wi-Fi 与移动数据都勾选）；动作选「HTTP 请求」，方法 <b>POST</b>，URL 填：</div>
-      <div class="cb"><button class="cp">复制</button><pre>https://124.221.69.228/api/firewall/<span class="tk" data-t>pgnfw_你的token</span>/add</pre></div>
+      <div class="stepbody">触发器选「<b>网络连接变化</b>」（Wi-Fi 与移动数据都勾选）；动作选「HTTP 请求」，方法 <b>GET</b>，URL 填：</div>
+      <div class="cb"><button class="cp">复制</button><pre>https://www.guguyun.com/cany_tencentecs/firewall/whitelist?token=<span class="tk" data-t>你的token</span></pre></div>
       <div class="stepline"><span class="no">2</span><h3>建第二个宏：15 分钟定时兜底</h3></div>
-      <div class="stepbody">触发器「<b>定期触发</b>」间隔 15 分钟，同样的 HTTP POST 动作，再加一个「网络已连接」约束。这个宏负责捕捉<b>静默换 IP</b>（Wi-Fi 没断但公网 IP 变了、蜂窝换 IP）。</div>
+      <div class="stepbody">触发器「<b>定期触发</b>」间隔 15 分钟，同样的 HTTP GET 动作，再加一个「网络已连接」约束。</div>
       <div class="stepline"><span class="no">3</span><h3>关闭电池优化</h3></div>
       <div class="stepbody">按 MacroDroid 引导给它加电池白名单，否则后台定时会被系统杀掉。</div>
-      <div class="note"><b>其他选择：</b>HTTP Shortcuts（开源，定时 POST + 桌面小部件一键加白）；Termux 用户直接跑 PC 页的 Linux 命令（自动识别 Termux，装完 <code>sv-enable crond</code>）。保留现有安卓客户端时，可继续使用这些独立自动化方案。</div>
-      <p class="community-option"><b>社群客户端：</b>网友提供的 <a href="https://wiki.uuuz.de/guide/clients/po0-clash">po0-clash（Android）</a> 已内置加白，应用运行期间自动检查，首次启用后需重启一次 VPN。下方<a href="#community">社群共建</a>有项目介绍与下载入口，同一设备通常无需重复安装独立脚本。</p>
+      <div class="note"><b>其他选择：</b>HTTP Shortcuts（开源，定时 GET + 桌面小部件一键加白）；Termux 用户直接跑 PC 页的 Linux 命令（自动识别 Termux，装完 <code>sv-enable crond</code>）。</div>
     </div>
 
     <!-- iOS -->
@@ -389,10 +387,8 @@ powershell -ExecutionPolicy Bypass -File i.ps1 -Tokens "<span class="tk" data-t>
     <h2>常见问题</h2>
     <div class="faq" style="margin-top:26px">
       <details><summary>Wi-Fi 连着没断、公网 IP 变了（家宽重拨），能发现吗？</summary><div class="bd">切网事件抓不到这种静默变更，靠<b>定时兜底</b>：各端 10–15 分钟周期照常上报。且家宽重拨大多在同一 /24 段内，本来就无需重新加白。真正的兜底主力是软路由 —— 它能感知 WAN 重拨事件秒级加白。</div></details>
-      <details><summary>多台 po0 机器怎么配？</summary><div class="bd">每台机器 token 不同，用<b>英文逗号</b>拼起来填一处即可（Shadowrocket / QX 用 <code>|</code>）：<code>pgnfw_机器A,pgnfw_机器B</code>。设备换 IP 后所有机器的白名单同时更新。</div></details>
-      <details><summary>固定槽位 @N 是什么？什么时候用？</summary><div class="bd">默认坑满按写入时间先进先出淘汰。家宽出口这种全家依赖的网段被挤掉几分钟都难受 —— 在 token 后加 <code>@槽位号</code>（0–4，自己指定）钉死：<code>pgnfw_xxx@0</code>，永不参与淘汰。每个 IP 只占一个槽位，换槽位号前先去面板删旧记录；手机等流动设备别钉，靠自愈就够。推荐：家宽 @0，剩 4 坑留给流动设备。</div></details>
-      <details><summary>走代理时会把代理节点 IP 加白吗？</summary><div class="bd">一般不会：请求直连官方 IP <code>124.221.69.228</code>，按域名分流的代理碰不到。iOS 模块已内置直连规则；TUN / 透明代理全局接管的场景加一条 <code>IP-CIDR,124.221.69.228/32,DIRECT,no-resolve</code>。软路由跑脚本时确认路由器自身流量不进代理链（如 OpenClash「绕过本机」）。</div></details>
-      <details><summary>白名单 5/5 满了怎么办？</summary><div class="bd">不用管：按写入时间自动淘汰最旧的，被挤出的设备最迟一个周期自动补回。想保住关键网段用固定槽位。</div></details>
+      <details><summary>多台机器怎么配？</summary><div class="bd">每台机器 token 不同，用<b>英文逗号</b>拼起来填一处即可（Shadowrocket / QX 也支持 <code>|</code>）：<code>token1,token2</code>。设备换 IP 后所有机器的白名单同时更新。</div></details>
+      <details><summary>走代理时会把代理节点 IP 加白吗？</summary><div class="bd">不会：iOS 代理模块已内置直连分流规则 <code>DOMAIN,www.guguyun.com,DIRECT</code>，确保请求不会经由代理节点发送，服务端识别并加白的始终是本机当前的真实公网出口 IP。</div></details>
       <details><summary>token 安全吗？</summary><div class="bd">token 即该机器的加白凭证，请勿公开分享。本页填写的 token 只保存在你的浏览器 localStorage，不会上传；仓库与模块不包含任何 token。</div></details>
       <details><summary>怎么卸载？</summary><div class="bd">OpenWrt：删除 <code>/usr/bin/po0fw</code>、<code>/etc/po0fw.conf</code>、<code>/etc/hotplug.d/iface/99-po0fw</code> 并清理 crontab · Linux：<code>systemctl disable --now po0fw.timer</code> 后删相关文件 · Windows：任务计划程序删「po0fw」· 手机端：删对应模块 / 宏 / 自动化。</div></details>
     </div>
@@ -401,7 +397,7 @@ powershell -ExecutionPolicy Bypass -File i.ps1 -Tokens "<span class="tk" data-t>
 
 <footer>
   <div class="wrap">
-    MIT License · <a href="https://github.com/w0ven/po0fw">w0ven/po0fw</a> · iOS 模块借鉴学习自 <a href="https://github.com/reallinzc/po0fw">reallinzc/po0fw</a>，感谢原作者 · 图文教程见 <a href="https://wiki.uuuz.de/guide/tutorials/po0fw-whitelist">wiki.uuuz.de</a>
+    MIT License · <a href="https://github.com/w0ven/po0fw">w0ven/po0fw</a>
   </div>
 </footer>
 
@@ -409,13 +405,19 @@ powershell -ExecutionPolicy Bypass -File i.ps1 -Tokens "<span class="tk" data-t>
 (function(){
   var RAW="https://raw.githubusercontent.com/w0ven/po0fw/main/";
   var inp=document.getElementById('tok'),st=document.getElementById('tokState');
-  var PH="pgnfw_你的token";
-  function tok(){var v=inp.value.trim();return /^pgnfw_[A-Za-z0-9]+(@\d)?$/.test(v)?v:null}
+  var PH="你的token";
+  function extractTok(str){
+    if(!str) return null;
+    str = str.trim();
+    var m = str.match(/[?&]token=([^&#\s]+)/);
+    if(m && m[1]) return decodeURIComponent(m[1]);
+    return /^[A-Za-z0-9_\-\.]+$/.test(str) ? str : null;
+  }
   function refresh(){
-    var t=tok(),show=t||PH;
+    var t=extractTok(inp.value),show=t||PH;
     document.querySelectorAll('[data-t]').forEach(function(e){e.textContent=show});
     if(t){st.textContent="已应用到本页所有命令";st.classList.add('ok');localStorage.setItem('po0fw_token',t)}
-    else{st.textContent=inp.value.trim()?"格式应为 pgnfw_xxx 或 pgnfw_xxx@0":"未填写，命令中显示占位符";st.classList.remove('ok')}
+    else{st.textContent=inp.value.trim()?"输入格式无效":"未填写，命令中显示占位符";st.classList.remove('ok')}
   }
   var saved=localStorage.getItem('po0fw_token');if(saved){inp.value=saved}
   inp.addEventListener('input',refresh);refresh();

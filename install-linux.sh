@@ -1,14 +1,15 @@
 #!/bin/sh
-# po0fw Linux / macOS / Termux 一键安装
-# 用法: PO0FW_TOKENS="pgnfw_xxx" sh install-linux.sh
-#   或: sh install-linux.sh pgnfw_xxx,pgnfw_yyy@0
+# po0fw (GGY) Linux / macOS / Termux 一键安装
+# 用法: PO0FW_TOKENS="你的token或链接" sh install-linux.sh
+#   或: sh install-linux.sh token1,token2
 set -e
 
 TOKENS="${1:-${PO0FW_TOKENS:-}}"
 if [ -z "$TOKENS" ]; then
-  echo "用法: PO0FW_TOKENS=\"pgnfw_xxx\" sh $0" >&2
+  echo "用法: PO0FW_TOKENS=\"你的token或分享链接\" sh $0" >&2
   exit 1
 fi
+
 
 RAW_BASE="${PO0FW_RAW:-https://raw.githubusercontent.com/w0ven/po0fw/main}"
 

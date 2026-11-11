@@ -4,11 +4,9 @@
  * 加白：GET https://www.guguyun.com/cany_tencentecs/firewall/whitelist?token=<token>
  * 流量：GET https://www.guguyun.com/cany_tencentecs/traffic/query?token=<token>
  *
- * 智能探活与自愈机制（方案 1）：
- * 1. 模拟手机 UA：固定槽位链接放行整段 /24。
- * 2. 直连嗅探公网出口 IP。
- * 3. 同 C 段 (/24) 智能节流跳过重复加白调用。
- * 4. 越界自愈与流量同步查询。
+ * 槽位支持：
+ * 1. 固定槽位：token@0 ~ token@5 或参数 slot=0
+ * 2. 轮流写入：token@rotate 或参数 slot=rotate
  */
 
 const API_BASE = "https://www.guguyun.com/cany_tencentecs/firewall/whitelist?token=";
@@ -124,6 +122,88 @@ function getCSubnet(ip) {
   const seg = String(ip).trim().split(".");
   if (seg.length !== 4) return ip;
   return `${seg[0]}.${seg[1]}.${seg[2]}.0/24`;
+}
+
+function parseSlotConfig(tokenStr, globalSlotArg) {
+  let baseToken = tokenStr;
+  let slotMode = "";
+  let fixedSlot = 0;
+  let rotateSlots = [0, 1, 2, 3, 4, 5];
+
+  const atIdx = tokenStr.lastIndexOf("@");
+  if (atIdx !== -1) {
+    baseToken = tokenStr.slice(0, atIdx).trim();
+    const atVal = tokenStr.slice(atIdx + 1).trim().toLowerCase();
+    if (/^\d+$/.test(atVal)) {
+      slotMode = "fixed";
+      fixedSlot = parseInt(atVal, 10);
+    } else if (atVal === "rotate" || atVal === "auto") {
+      slotMode = "rotate";
+      rotateSlots = [0, 1, 2, 3, 4, 5];
+    } else if (/^(\d+)-(\d+)$/.test(atVal)) {
+      const mRange = atVal.match(/^(\d+)-(\d+)$/);
+      const start = parseInt(mRange[1], 10);
+      const end = parseInt(mRange[2], 10);
+      rotateSlots = [];
+      for (let r = Math.min(start, end); r <= Math.max(start, end); r++) rotateSlots.push(r);
+      slotMode = "rotate";
+    }
+  }
+
+  if (!slotMode && globalSlotArg) {
+    const g = String(globalSlotArg).trim().toLowerCase();
+    if (/^\d+$/.test(g)) {
+      slotMode = "fixed";
+      fixedSlot = parseInt(g, 10);
+    } else if (g === "rotate" || g === "auto") {
+      slotMode = "rotate";
+      rotateSlots = [0, 1, 2, 3, 4, 5];
+    } else if (/^(\d+)-(\d+)$/.test(g)) {
+      const mG = g.match(/^(\d+)-(\d+)$/);
+      const sG = parseInt(mG[1], 10);
+      const eG = parseInt(mG[2], 10);
+      rotateSlots = [];
+      for (let j = Math.min(sG, eG); j <= Math.max(sG, eG); j++) rotateSlots.push(j);
+      slotMode = "rotate";
+    }
+  }
+
+  return { baseToken, slotMode, fixedSlot, rotateSlots };
+}
+
+function resolveActualToken(ctx, rawToken, index, globalSlotArg) {
+  const cfg = parseSlotConfig(rawToken, globalSlotArg);
+  const pointerKey = STORE_PREFIX + "slot_ptr_" + index;
+  let currentPtr = parseInt(ctx.storage.get(pointerKey) || "0", 10);
+  if (isNaN(currentPtr) || currentPtr < 0 || currentPtr >= cfg.rotateSlots.length) {
+    currentPtr = 0;
+  }
+
+  let actualToken = cfg.baseToken;
+  let slotLabel = "";
+  let activeSlot = null;
+
+  if (cfg.slotMode === "fixed") {
+    actualToken = `${cfg.baseToken}@${cfg.fixedSlot}`;
+    slotLabel = `@${cfg.fixedSlot}`;
+    activeSlot = cfg.fixedSlot;
+  } else if (cfg.slotMode === "rotate") {
+    activeSlot = cfg.rotateSlots[currentPtr];
+    actualToken = `${cfg.baseToken}@${activeSlot}`;
+    slotLabel = `@${activeSlot}(轮换)`;
+  }
+
+  return {
+    raw: rawToken,
+    baseToken: cfg.baseToken,
+    actualToken: actualToken,
+    slotMode: cfg.slotMode,
+    slotLabel: slotLabel,
+    activeSlot: activeSlot,
+    currentPtr: currentPtr,
+    rotateSlots: cfg.rotateSlots,
+    pointerKey: pointerKey,
+  };
 }
 
 async function detectPublicIp(ctx) {
@@ -246,7 +326,7 @@ function parseTrafficData(data) {
   return { line: line, used: usedStr, total: totalStr, rest: restStr, reset: rawReset };
 }
 
-async function queryTraffic(ctx, token, index, multi) {
+async function queryTraffic(ctx, baseToken, index, multi) {
   const kvKey = STORE_PREFIX + "traffic_" + index;
   const kvTsKey = STORE_PREFIX + "traffic_ts_" + index;
 
@@ -259,7 +339,7 @@ async function queryTraffic(ctx, token, index, multi) {
     return cached;
   }
 
-  const url = TRAFFIC_API_BASE + encodeURIComponent(token);
+  const url = TRAFFIC_API_BASE + encodeURIComponent(baseToken);
   const r = await httpGetOnce(ctx, url, {
     "User-Agent":
       "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
@@ -287,8 +367,8 @@ async function queryTraffic(ctx, token, index, multi) {
   return cached;
 }
 
-async function apiCall(ctx, token, uaMode) {
-  const url = API_BASE + encodeURIComponent(token);
+async function apiCall(ctx, actualToken, uaMode) {
+  const url = API_BASE + encodeURIComponent(actualToken);
   const userAgent =
     uaMode && uaMode.toLowerCase() === "pc"
       ? "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -345,6 +425,9 @@ export default async function (ctx) {
     return;
   }
 
+  const globalSlot = (ctx.env && ctx.env.slot) || "";
+  const tokenItems = tokens.map((t, i) => resolveActualToken(ctx, t, i, globalSlot));
+
   const uaMode = (ctx.env && ctx.env.ua) || "mobile";
   const isMobileUa = uaMode.toLowerCase() !== "pc";
   const currentIp = await detectPublicIp(ctx);
@@ -365,10 +448,11 @@ export default async function (ctx) {
   const cellular = onCellular(ctx);
   const results = [];
   const trafficLines = [];
-  for (let i = 0; i < tokens.length; i++) {
-    const st = await apiCall(ctx, tokens[i], uaMode);
-    results.push({ token: tokens[i], st: st, kvState: STORE_PREFIX + i });
-    const traf = await queryTraffic(ctx, tokens[i], i, tokens.length > 1);
+  for (let i = 0; i < tokenItems.length; i++) {
+    const item = tokenItems[i];
+    const st = await apiCall(ctx, item.actualToken, uaMode);
+    results.push({ item: item, st: st, kvState: STORE_PREFIX + i });
+    const traf = await queryTraffic(ctx, item.baseToken, i, tokenItems.length > 1);
     if (traf) trafficLines.push(traf);
   }
 
@@ -376,29 +460,40 @@ export default async function (ctx) {
   let changed = false;
   const lines = [];
   for (let i = 0; i < results.length; i++) {
-    const item = results[i];
-    const st = item.st;
+    const res = results[i];
+    const item = res.item;
+    const st = res.st;
     if (st.applied) okCount++;
-    const short = item.token.length > 12 ? item.token.slice(0, 10) + "…" : item.token;
-    lines.push("#" + (i + 1) + " [" + short + "] " + (st.applied ? "✅ " + st.msg : "❌ " + st.error));
+    const short = item.baseToken.length > 12 ? item.baseToken.slice(0, 10) + "…" : item.baseToken;
+    lines.push("#" + (i + 1) + " [" + short + (item.slotLabel ? " " + item.slotLabel : "") + "] " + (st.applied ? "✅ " + st.msg : "❌ " + st.error));
 
     const state = (st.applied ? "1" : "0") + "|" + (st.msg || st.error || "");
-    if (ctx.storage.get(item.kvState) !== state) {
-      ctx.storage.set(item.kvState, state);
+    if (ctx.storage.get(res.kvState) !== state) {
+      ctx.storage.set(res.kvState, state);
       changed = true;
     }
   }
 
   const allOk = okCount === results.length;
+  const ipDrift = lastIp && currentIp && (isMobileUa ? !sameC24(currentIp, lastIp) : currentIp !== lastIp);
+
   if (allOk) {
     if (currentIp) ctx.storage.set(STORE_PREFIX + "last_ip", currentIp);
     ctx.storage.set(STORE_PREFIX + "last_ts", String(now));
     ctx.storage.set(STORE_PREFIX + "last_ok", "1");
+
+    if (ipDrift || !lastIp) {
+      tokenItems.forEach(it => {
+        if (it.slotMode === "rotate") {
+          const nextPtr = (it.currentPtr + 1) % it.rotateSlots.length;
+          ctx.storage.set(it.pointerKey, String(nextPtr));
+        }
+      });
+    }
   } else {
     ctx.storage.set(STORE_PREFIX + "last_ok", "0");
   }
 
-  const ipDrift = lastIp && currentIp && (isMobileUa ? !sameC24(currentIp, lastIp) : currentIp !== lastIp);
   const title =
     "GGY 加白 " + okCount + "/" + results.length + (cellular ? " 📶 移动网络" : " 🌐 Wi-Fi");
 

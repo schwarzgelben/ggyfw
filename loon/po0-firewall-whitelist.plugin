@@ -1,13 +1,14 @@
 #!name=GGY 咕咕云防火墙自动加白
-#!desc=调用咕咕云 (GGY) 防火墙白名单链接将本机当前出口 IP 自动加入安全组白名单。支持多 token（英文逗号分割），同网段智能节流、network-changed 事件与每 2 分钟 cron 极速自愈。
+#!desc=调用咕咕云 (GGY) 防火墙白名单链接将出口 IP 自动加入安全组，并展示实时流量。支持固定槽位 (@0~@5)、环形轮流写入、手机识别 /24 放行、2分钟极速自愈与面板手动刷新。
 #!author=reallinzc
 #!homepage=https://github.com/schwarzgelben/ggyfw
 #!icon=https://raw.githubusercontent.com/Koolson/Qure/master/IconSet/Color/Panel.png
 
 [Argument]
-tokens = input,"",tag=API tokens,desc=咕咕云防火墙白名单 token 或完整分享链接；多台机器用英文逗号分割
+tokens = input,"",tag=API tokens,desc=咕咕云防火墙白名单 token 或完整分享链接；多台机器用英文逗号分割。支持末尾加 @0~5（如 token@0 固定槽位 0，token@rotate 轮流写入 0~5 槽）
 skip_wifi = input,"",tag=信任家庭 Wi-Fi,desc=可选，填入家庭 Wi-Fi 名称（SSID，多个逗号分割），连入时自动跳过上报以保留轮换槽位配额
 ua = select,"mobile","mobile","pc",tag=UA 模拟模式,desc=mobile 模拟手机放行 /24 网段，pc 放行 /32
+slot = input,"",tag=槽位管理,desc=可选，0~5（固定写入对应槽位），或 rotate（轮流写入 0~5 槽）
 
 [Rule]
 DOMAIN,www.guguyun.com,DIRECT
@@ -18,5 +19,5 @@ IP-CIDR,1.1.1.1/32,DIRECT,no-resolve
 DOMAIN,1.1.1.1,DIRECT
 
 [Script]
-cron "*/2 * * * *" script-path=https://raw.githubusercontent.com/schwarzgelben/ggyfw/main/scripts/po0-firewall-whitelist.js, timeout=60, tag=ggy-fw-cron, argument=[{tokens},{skip_wifi},{ua}]
-network-changed script-path=https://raw.githubusercontent.com/schwarzgelben/ggyfw/main/scripts/po0-firewall-whitelist.js, timeout=60, tag=ggy-fw-event, argument=[{tokens},{skip_wifi},{ua}]
+cron "*/2 * * * *" script-path=https://raw.githubusercontent.com/schwarzgelben/ggyfw/main/scripts/po0-firewall-whitelist.js, timeout=60, tag=ggy-fw-cron, argument=[{tokens},{skip_wifi},{ua},{slot}]
+network-changed script-path=https://raw.githubusercontent.com/schwarzgelben/ggyfw/main/scripts/po0-firewall-whitelist.js, timeout=60, tag=ggy-fw-event, argument=[{tokens},{skip_wifi},{ua},{slot}]

@@ -4,9 +4,14 @@
  *
  * 加白端点：GET https://www.guguyun.com/cany_tencentecs/firewall/whitelist?token=<token>
  * 流量端点：GET https://www.guguyun.com/cany_tencentecs/traffic/query?token=<token>
- * 行为：
- * 1. 自动加白：调用白名单链接将当前出口 IP/网段加入防火墙安全组。
- * 2. 流量查询：自动查询实例已用/剩余/总量及重置日，并在面板优雅展示。
+ *
+ * 槽位支持（固定槽位 @0~@5 与轮换写入）：
+ * 1. 固定槽位写入：在 token 末尾追加 @0 ~ @5（例如 token@0），或指定参数 slot=0。
+ *    每个固定槽位在手机 UA 下放行对应基站的整段 /24 网段。
+ * 2. 轮流写入（环形槽位池）：指定 token@rotate（或 token@0-5 / 参数 slot=rotate）。
+ *    每次检测到跨基站网段漂移（新 C 段）时，自动轮换写入下一个槽位（0 -> 1 -> 2 -> 3 -> 4 -> 5 -> 0）。
+ *    这使得用户最近经过的 6 个基站网段同时保持加白，多地点往返无缝零断流！
+ * 3. 流量查询自动脱敏：查询流量时自动剥离 @0~@5 后缀，保证流量接口稳定命中。
  *
  * 智能探活与自愈机制（方案 1）：
  * 1. 识别手机 UA（ua=mobile，默认）：固定槽位链接放行整段 /24（256个IP）。
@@ -152,6 +157,7 @@ function httpRequest(method, opts, attempt) {
 function extractToken(raw) {
   if (!raw) return "";
   var s = String(raw).trim();
+  // 提取包含 @0~5 或 @rotate 的完整 token
   var m = s.match(/[?&]token=([^&#\s]+)/);
   if (m && m[1]) return decodeURIComponent(m[1]);
   if (/^https?:\/\//i.test(s)) return "";
@@ -159,15 +165,16 @@ function extractToken(raw) {
 }
 
 function parseArgument() {
-  var res = { tokens: "", skip_wifi: "", ua: "mobile", interval: "10", force: "0" };
+  var res = { tokens: "", skip_wifi: "", ua: "mobile", interval: "10", force: "0", slot: "" };
   if (typeof $argument === "undefined" || $argument === null) return res;
 
-  // 1. Loon 数组对象传参
+  // 1. Loon 数组对象传参: [tokens, skip_wifi, ua, slot]
   if (Array.isArray($argument)) {
     if ($argument[0] !== undefined) res.tokens = String($argument[0]);
     if ($argument[1] !== undefined) res.skip_wifi = String($argument[1]);
     if ($argument[2] !== undefined) res.ua = String($argument[2]);
-    if ($argument[3] !== undefined) res.interval = String($argument[3]);
+    if ($argument[3] !== undefined) res.slot = String($argument[3]);
+    if ($argument[4] !== undefined) res.interval = String($argument[4]);
     return res;
   }
 
@@ -178,6 +185,7 @@ function parseArgument() {
     if ($argument.ua !== undefined) res.ua = String($argument.ua);
     if ($argument.interval !== undefined) res.interval = String($argument.interval);
     if ($argument.force !== undefined) res.force = String($argument.force);
+    if ($argument.slot !== undefined) res.slot = String($argument.slot);
     return res;
   }
 
@@ -194,12 +202,13 @@ function parseArgument() {
         if (p.ua !== undefined) res.ua = String(p.ua);
         if (p.interval !== undefined) res.interval = String(p.interval);
         if (p.force !== undefined) res.force = String(p.force);
+        if (p.slot !== undefined) res.slot = String(p.slot);
         return res;
       }
     } catch (e) {}
   }
 
-  // 4. JSON Array 或中括号语法 (Loon argument=[...]): ["tok", "wifi", "mobile"]
+  // 4. JSON Array 或中括号语法 (Loon argument=[...]): ["tok", "wifi", "mobile", "rotate"]
   if (raw.charAt(0) === "[") {
     try {
       var arr = JSON.parse(raw);
@@ -207,7 +216,8 @@ function parseArgument() {
         if (arr[0] !== undefined) res.tokens = String(arr[0]);
         if (arr[1] !== undefined) res.skip_wifi = String(arr[1]);
         if (arr[2] !== undefined) res.ua = String(arr[2]);
-        if (arr[3] !== undefined) res.interval = String(arr[3]);
+        if (arr[3] !== undefined) res.slot = String(arr[3]);
+        if (arr[4] !== undefined) res.interval = String(arr[4]);
         return res;
       }
     } catch (e) {
@@ -216,12 +226,13 @@ function parseArgument() {
       if (parts[0] !== undefined) res.tokens = parts[0].trim();
       if (parts[1] !== undefined) res.skip_wifi = parts[1].trim();
       if (parts[2] !== undefined) res.ua = parts[2].trim();
-      if (parts[3] !== undefined) res.interval = parts[3].trim();
+      if (parts[3] !== undefined) res.slot = parts[3].trim();
+      if (parts[4] !== undefined) res.interval = parts[4].trim();
       return res;
     }
   }
 
-  // 5. Query string 语法: tokens=xxx&skip_wifi=yyy&ua=mobile
+  // 5. Query string 语法: tokens=xxx&skip_wifi=yyy&ua=mobile&slot=0
   if (raw.indexOf("=") !== -1) {
     var pairs = raw.split("&");
     var foundKey = false;
@@ -235,6 +246,7 @@ function parseArgument() {
         else if (k === "ua") { res.ua = v; foundKey = true; }
         else if (k === "interval") { res.interval = v; foundKey = true; }
         else if (k === "force") { res.force = v; foundKey = true; }
+        else if (k === "slot") { res.slot = v; foundKey = true; }
       }
     }
     if (foundKey) return res;
@@ -359,6 +371,105 @@ function detectPublicIp() {
   return probeAt(0);
 }
 
+/* ---------- 槽位解析与轮换管理 ---------- */
+
+function parseSlotConfig(tokenStr, globalSlotArg) {
+  var baseToken = tokenStr;
+  var slotMode = ""; // "" (默认自动轮换/未指定) | "fixed" | "rotate"
+  var fixedSlot = 0;
+  var rotateSlots = [0, 1, 2, 3, 4, 5];
+
+  // 1. 优先从单个 token 字符串自身解析后缀 @...
+  var atIdx = tokenStr.lastIndexOf("@");
+  if (atIdx !== -1) {
+    baseToken = tokenStr.slice(0, atIdx).trim();
+    var atVal = tokenStr.slice(atIdx + 1).trim().toLowerCase();
+    if (/^\d+$/.test(atVal)) {
+      slotMode = "fixed";
+      fixedSlot = parseInt(atVal, 10);
+    } else if (atVal === "rotate" || atVal === "auto") {
+      slotMode = "rotate";
+      rotateSlots = [0, 1, 2, 3, 4, 5];
+    } else if (/^(\d+)-(\d+)$/.test(atVal)) {
+      var mRange = atVal.match(/^(\d+)-(\d+)$/);
+      var start = parseInt(mRange[1], 10);
+      var end = parseInt(mRange[2], 10);
+      var list = [];
+      for (var r = Math.min(start, end); r <= Math.max(start, end); r++) list.push(r);
+      slotMode = "rotate";
+      rotateSlots = list;
+    }
+  }
+
+  // 2. 若 token 未显式指定后缀，则遵循全局 slot 参数
+  if (!slotMode && globalSlotArg) {
+    var g = String(globalSlotArg).trim().toLowerCase();
+    if (/^\d+$/.test(g)) {
+      slotMode = "fixed";
+      fixedSlot = parseInt(g, 10);
+    } else if (g === "rotate" || g === "auto") {
+      slotMode = "rotate";
+      rotateSlots = [0, 1, 2, 3, 4, 5];
+    } else if (/^(\d+)-(\d+)$/.test(g)) {
+      var mG = g.match(/^(\d+)-(\d+)$/);
+      var sG = parseInt(mG[1], 10);
+      var eG = parseInt(mG[2], 10);
+      var listG = [];
+      for (var j = Math.min(sG, eG); j <= Math.max(sG, eG); j++) listG.push(j);
+      slotMode = "rotate";
+      rotateSlots = listG;
+    } else if (g.indexOf(",") !== -1) {
+      var parts = g.split(",").map(function (s) { return parseInt(s.trim(), 10); }).filter(function (n) { return !isNaN(n); });
+      if (parts.length > 0) {
+        slotMode = "rotate";
+        rotateSlots = parts;
+      }
+    }
+  }
+
+  return {
+    baseToken: baseToken,
+    slotMode: slotMode,
+    fixedSlot: fixedSlot,
+    rotateSlots: rotateSlots,
+  };
+}
+
+function resolveActualToken(rawToken, index, globalSlotArg) {
+  var cfg = parseSlotConfig(rawToken, globalSlotArg);
+  var pointerKey = STORE_PREFIX + "slot_ptr_" + index;
+  var currentPtr = parseInt(storeRead(pointerKey) || "0", 10);
+  if (isNaN(currentPtr) || currentPtr < 0 || currentPtr >= cfg.rotateSlots.length) {
+    currentPtr = 0;
+  }
+
+  var actualToken = cfg.baseToken;
+  var slotLabel = "";
+  var activeSlot = null;
+
+  if (cfg.slotMode === "fixed") {
+    actualToken = cfg.baseToken + "@" + cfg.fixedSlot;
+    slotLabel = "@" + cfg.fixedSlot;
+    activeSlot = cfg.fixedSlot;
+  } else if (cfg.slotMode === "rotate") {
+    activeSlot = cfg.rotateSlots[currentPtr];
+    actualToken = cfg.baseToken + "@" + activeSlot;
+    slotLabel = "@" + activeSlot + "(轮换)";
+  }
+
+  return {
+    raw: rawToken,
+    baseToken: cfg.baseToken,
+    actualToken: actualToken,
+    slotMode: cfg.slotMode,
+    slotLabel: slotLabel,
+    activeSlot: activeSlot,
+    currentPtr: currentPtr,
+    rotateSlots: cfg.rotateSlots,
+    pointerKey: pointerKey,
+  };
+}
+
 /* ---------- 流量查询与格式化 ---------- */
 
 function formatTrafficBytes(val, unit) {
@@ -462,7 +573,7 @@ function parseTrafficData(data) {
   return { line: line, used: usedStr, total: totalStr, rest: restStr, reset: rawReset };
 }
 
-function queryTraffic(token, index, multi) {
+function queryTraffic(baseToken, index, multi) {
   var kvKey = STORE_PREFIX + "traffic_" + index;
   var kvTsKey = STORE_PREFIX + "traffic_ts_" + index;
 
@@ -476,7 +587,8 @@ function queryTraffic(token, index, multi) {
     return Promise.resolve(cached);
   }
 
-  var url = TRAFFIC_API_BASE + encodeURIComponent(token);
+  // 流量查询接口必须使用纯净 baseToken（不含 @0~5 后缀）
+  var url = TRAFFIC_API_BASE + encodeURIComponent(baseToken);
   var opts = {
     url: url,
     headers: {
@@ -514,18 +626,18 @@ function queryTraffic(token, index, multi) {
     });
 }
 
-function fetchAllTraffic(tokens) {
+function fetchAllTraffic(tokenItems) {
   return Promise.all(
-    tokens.map(function (t, i) {
-      return queryTraffic(t, i, tokens.length > 1);
+    tokenItems.map(function (item, i) {
+      return queryTraffic(item.baseToken, i, tokenItems.length > 1);
     })
   );
 }
 
 /* ---------- 业务加白逻辑 ---------- */
 
-function apiCall(token, uaMode) {
-  var url = API_BASE + encodeURIComponent(token);
+function apiCall(actualToken, uaMode) {
+  var url = API_BASE + encodeURIComponent(actualToken);
   var userAgent =
     uaMode && uaMode.toLowerCase() === "pc"
       ? "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -567,11 +679,11 @@ function apiCall(token, uaMode) {
   });
 }
 
-function ensureWhitelisted(token, index, uaMode) {
+function ensureWhitelisted(item, index, uaMode) {
   var kvState = STORE_PREFIX + index;
-  var ctx = { kvState: kvState, token: token };
+  var ctx = { kvState: kvState, item: item };
 
-  return apiCall(token, uaMode).then(function (st) {
+  return apiCall(item.actualToken, uaMode).then(function (st) {
     ctx.st = st;
     return ctx;
   });
@@ -579,8 +691,9 @@ function ensureWhitelisted(token, index, uaMode) {
 
 function describe(index, ctx) {
   var st = ctx.st;
-  var short = ctx.token.length > 12 ? ctx.token.slice(0, 10) + "…" : ctx.token;
-  var head = "#" + (index + 1) + " [" + short + "] ";
+  var item = ctx.item;
+  var short = item.baseToken.length > 12 ? item.baseToken.slice(0, 10) + "…" : item.baseToken;
+  var head = "#" + (index + 1) + " [" + short + (item.slotLabel ? " " + item.slotLabel : "") + "] ";
   if (st.applied) {
     return head + "✅ " + (st.msg || "加白成功");
   } else {
@@ -653,6 +766,11 @@ function runMain() {
     return;
   }
 
+  // 将 rawToken 解析为槽位管理对象
+  var tokenItems = tokens.map(function (t, i) {
+    return resolveActualToken(t, i, argConfig.slot);
+  });
+
   // 探测公网出口 IP
   detectPublicIp()
     .then(function (currentIp) {
@@ -666,7 +784,7 @@ function runMain() {
       var canSkip = false;
       var skipSubnet = "";
 
-      // 智能探活节流：在同一 /24 网段内且心跳未超时，跳过向咕咕云重复调用
+      // 智能探活节流：在同一 /24 网段内且心跳未超时，跳过向咕咕云重复调用加白
       if (!isManualTap && lastOk && currentIp && lastIp && now - lastTs < maxAgeMs) {
         if (isMobileUa) {
           if (sameC24(currentIp, lastIp)) {
@@ -682,10 +800,20 @@ function runMain() {
       }
 
       if (canSkip) {
-        return fetchAllTraffic(tokens).then(function (trafficLines) {
+        return fetchAllTraffic(tokenItems).then(function (trafficLines) {
           var minsAgo = Math.max(0, Math.floor((now - lastTs) / 60000));
           var title = "GGY 加白 · 放行中" + (onCellular() ? " 📶 移动网络" : " 🌐 Wi-Fi");
           var content = "出口 IP: " + currentIp + "\n放行网段: " + skipSubnet + " (无需重报)";
+
+          // 槽位状态提示
+          var slotHints = tokenItems.map(function (it, idx) {
+            if (it.slotMode === "rotate") return (tokenItems.length > 1 ? "#" + (idx + 1) + " " : "") + "槽位: 轮换 @" + it.activeSlot + " (共 " + it.rotateSlots.length + " 槽)";
+            if (it.slotMode === "fixed") return (tokenItems.length > 1 ? "#" + (idx + 1) + " " : "") + "槽位: 固定 @" + it.activeSlot;
+            return "";
+          }).filter(function (s) { return !!s; });
+          if (slotHints.length > 0) {
+            content += "\n" + slotHints.join("\n");
+          }
 
           var validTraffic = trafficLines.filter(function (s) { return !!s; });
           if (validTraffic.length > 0) {
@@ -700,11 +828,11 @@ function runMain() {
       // 越界自愈或保活上报：并行调用咕咕云加白 API 与流量查询
       return Promise.all([
         Promise.all(
-          tokens.map(function (t, i) {
-            return ensureWhitelisted(t, i, argConfig.ua);
+          tokenItems.map(function (it, i) {
+            return ensureWhitelisted(it, i, argConfig.ua);
           })
         ),
-        fetchAllTraffic(tokens),
+        fetchAllTraffic(tokenItems),
       ]).then(function (res) {
         var results = res[0];
         var trafficLines = res[1];
@@ -738,6 +866,16 @@ function runMain() {
           lastIp &&
           currentIp &&
           (isMobileUa ? !sameC24(currentIp, lastIp) : currentIp !== lastIp);
+
+        // 当请求成功且发生跨网段漂移（或首次上报）时，轮换模式推进至下一个槽位！
+        if (allOk && (ipDrift || !lastIp)) {
+          tokenItems.forEach(function (it) {
+            if (it.slotMode === "rotate") {
+              var nextPtr = (it.currentPtr + 1) % it.rotateSlots.length;
+              storeWrite(String(nextPtr), it.pointerKey);
+            }
+          });
+        }
 
         var title =
           "GGY 加白 " + okCount + "/" + results.length + (onCellular() ? " 📶 移动网络" : " 🌐 Wi-Fi");

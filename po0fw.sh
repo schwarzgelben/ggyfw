@@ -8,8 +8,13 @@
 #   ./po0fw.sh status                                    # 检查/加白状态
 #   ./po0fw.sh traffic                                   # 单独查询流量
 #
+# 槽位支持:
+#   在 token 末尾追加 @0~@5（固定槽位）或 @rotate（轮流写入 0~5 槽）
+#   或设置环境变量 PO0FW_SLOT="0" 或 PO0FW_SLOT="rotate"
+#
 # 配置文件（可选，优先级低于环境变量/参数）: /etc/po0fw.conf 内容示例:
 #   PO0FW_TOKENS="你的token"
+#   PO0FW_SLOT="0"
 #
 # API 说明: 使用咕咕云智简魔方插件白名单分享链接与流量查询接口。
 #   加白: GET https://www.guguyun.com/cany_tencentecs/firewall/whitelist?token=<token>
@@ -24,6 +29,7 @@ set -u
 API_BASE="${PO0FW_API:-https://www.guguyun.com/cany_tencentecs/firewall/whitelist}"
 TRAFFIC_API_BASE="${PO0FW_TRAFFIC_API:-https://www.guguyun.com/cany_tencentecs/traffic/query}"
 CONF="${PO0FW_CONF:-/etc/po0fw.conf}"
+SLOT_ARG="${PO0FW_SLOT:-}"
 
 # 默认使用手机 UA：在固定槽位下使软路由/Linux 获得 /24 大网段放行福利（防宽带重拨断流）
 PO0FW_UA="${PO0FW_UA:-mobile}"
@@ -56,6 +62,7 @@ if [ -z "$TOKENS" ] && [ -f "$CONF" ]; then
   # shellcheck disable=SC1090
   . "$CONF"
   TOKENS="${PO0FW_TOKENS:-}"
+  [ -z "$SLOT_ARG" ] && SLOT_ARG="${PO0FW_SLOT:-}"
 fi
 if [ -z "$TOKENS" ]; then
   echo "po0fw: 未配置 token。请设置 PO0FW_TOKENS 或写入 $CONF" >&2
@@ -89,7 +96,24 @@ for entry in $TOKENS; do
   
   tok=$(extract_token "$entry")
   [ -z "$tok" ] && continue
-  short=$(echo "$tok" | cut -c1-12)
+
+  # 槽位处理：若自身无 @ 且配置了 SLOT_ARG
+  case "$tok" in
+    *@*) ;;
+    *)
+      if [ -n "$SLOT_ARG" ]; then
+        tok="${tok}@${SLOT_ARG}"
+      fi
+      ;;
+  esac
+
+  # 提取基础 token（用于查询流量）
+  base_tok=$(echo "$tok" | sed 's/@[^@]*$//')
+  short=$(echo "$base_tok" | cut -c1-12)
+  slot_hint=""
+  case "$tok" in
+    *@*) slot_hint=" @$(echo "$tok" | sed 's/.*@//')" ;;
+  esac
 
   if [ "$MODE" != "traffic" ]; then
     url="${API_BASE}?token=${tok}"
@@ -99,21 +123,20 @@ for entry in $TOKENS; do
     msg=$(echo "$res" | sed -n 's/.*"msg":"\([^"]*\)".*/\1/p')
 
     if [ "$status" = "200" ]; then
-      log "#$IDX [${short}…] ✅ 加白成功: ${msg:-OK}"
+      log "#$IDX [${short}…${slot_hint}] ✅ 加白成功: ${msg:-OK}"
     else
       log "#$IDX [${short}…] ❌ 加白失败 (status=${status:-error}): ${msg:-$res}"
       FAIL=1
     fi
   fi
 
-  # 查询流量信息（若可用则展示）
-  turl="${TRAFFIC_API_BASE}?token=${tok}"
+  # 查询流量信息（使用纯净 base_tok）
+  turl="${TRAFFIC_API_BASE}?token=${base_tok}"
   tres=$(curl $CURL_OPTS -X GET "$turl" 2>/dev/null || true)
   tstatus=$(echo "$tres" | sed -n 's/.*"status":\([0-9]*\).*/\1/p')
   if [ "$tstatus" = "200" ]; then
     tused=$(echo "$tres" | sed -n 's/.*"used":"\([^"]*\)".*/\1/p')
     ttotal=$(echo "$tres" | sed -n 's/.*"total":"\([^"]*\)".*/\1/p')
-    trest=$(echo "$tres" | sed -n 's/.*"rest":"\([^"]*\)".*/\1/p')
     treset=$(echo "$tres" | sed -n 's/.*"reset_time":"\([^"]*\)".*/\1/p')
     if [ -n "$tused" ] && [ -n "$ttotal" ]; then
       log "#$IDX [${short}…] 📊 流量: ${tused} / ${ttotal}${treset:+ · 重置: $treset}"

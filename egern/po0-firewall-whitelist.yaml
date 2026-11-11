@@ -1,5 +1,5 @@
 name: GGY 咕咕云防火墙自动加白
-description: 调用咕咕云 (GGY) 防火墙白名单链接将本机当前出口 IP 加入安全组白名单。支持多 token（英文逗号分割），同网段智能节流、每 2 分钟 cron 与网络变化时极速自愈。
+description: 调用咕咕云 (GGY) 防火墙白名单链接将出口 IP 自动加入安全组，并展示实时流量。支持固定槽位 (@0~@5)、环形轮流写入、手机识别 /24 放行、2分钟极速自愈与面板手动刷新。
 author: reallinzc
 homepage: https://github.com/schwarzgelben/ggyfw
 
@@ -7,6 +7,7 @@ compat_arguments:
   tokens: ""
   skip_wifi: ""
   ua: "mobile"
+  slot: ""
 
 rules:
   - domain:
@@ -35,6 +36,7 @@ scriptings:
         tokens: "{{{tokens}}}"
         skip_wifi: "{{{skip_wifi}}}"
         ua: "{{{ua}}}"
+        slot: "{{{slot}}}"
   - network:
       name: ggy-fw-network
       script_url: https://raw.githubusercontent.com/schwarzgelben/ggyfw/main/egern/po0-firewall-whitelist.js
@@ -43,3 +45,4 @@ scriptings:
         tokens: "{{{tokens}}}"
         skip_wifi: "{{{skip_wifi}}}"
         ua: "{{{ua}}}"
+        slot: "{{{slot}}}"

@@ -1,8 +1,9 @@
 ﻿#requires -Version 5.1
 # po0fw - GGY (咕咕云) 防火墙自动加白与流量查询 (Windows)
-# 用法: powershell -File po0fw.ps1 -Tokens "token1,token2"
+# 用法: powershell -File po0fw.ps1 -Tokens "token1,token2" [-Slot "0"]
 param(
     [string]$Tokens = $env:PO0FW_TOKENS,
+    [string]$Slot = $env:PO0FW_SLOT,
     [string]$ApiBase = "https://www.guguyun.com/cany_tencentecs/firewall/whitelist",
     [string]$TrafficApiBase = "https://www.guguyun.com/cany_tencentecs/traffic/query",
     [string]$UaMode = "mobile",
@@ -48,7 +49,15 @@ foreach ($entry in $Tokens.Split(',')) {
     if (-not $entry) { continue }
     $tok = Get-GgyToken -InputStr $entry
     if (-not $tok) { continue }
-    $short = $tok.Substring(0, [Math]::Min(12, $tok.Length))
+
+    # 槽位处理
+    if ($tok -notmatch '@' -and $Slot) {
+        $tok = "$tok@$Slot"
+    }
+
+    $baseTok = $tok -replace '@.*$', ''
+    $short = $baseTok.Substring(0, [Math]::Min(12, $baseTok.Length))
+    $slotHint = if ($tok -match '@(.*)$') { " @$($matches[1])" } else { "" }
     
     if (-not $Traffic) {
         $url = "$ApiBase`?token=$tok"
@@ -57,7 +66,7 @@ foreach ($entry in $Tokens.Split(',')) {
             $resStatus = $res.status
             $msg = $res.msg
             if ($resStatus -eq 200) {
-                Write-Host "[po0fw] #$idx [$short…] ✅ 加白成功: $msg"
+                Write-Host "[po0fw] #$idx [$short…$slotHint] ✅ 加白成功: $msg"
             } else {
                 Write-Host "[po0fw] #$idx [$short…] ❌ 加白失败 (status=$resStatus): $msg"
                 $fail = $true
@@ -68,8 +77,8 @@ foreach ($entry in $Tokens.Split(',')) {
         }
     }
 
-    # 查询流量信息
-    $tUrl = "$TrafficApiBase`?token=$tok"
+    # 查询流量信息（使用纯净 baseTok）
+    $tUrl = "$TrafficApiBase`?token=$baseTok"
     try {
         $tRes = Invoke-RestMethod -Method Get -Uri $tUrl -TimeoutSec 10 -Headers @{ "Accept" = "application/json"; "User-Agent" = $userAgent }
         if ($tRes.status -eq 200 -and $tRes.data) {

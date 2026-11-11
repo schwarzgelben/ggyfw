@@ -18,7 +18,7 @@ scriptings:
   - schedule:
       name: ggy-fw-cron
       cron: "*/10 * * * *"
-      script_url: https://raw.githubusercontent.com/schwarzgelben/ggyfw/main/egern/po0-firewall-whitelist.js
+      script_url: https://raw.githubusercontent.com/schwarzgelben/ggyfw/main/egern/po0-firewall-whitelist.js?v=20261111b
       timeout: 60
       env:
         tokens: "{{{tokens}}}"
@@ -27,7 +27,7 @@ scriptings:
         slot: "{{{slot}}}"
   - network:
       name: ggy-fw-network
-      script_url: https://raw.githubusercontent.com/schwarzgelben/ggyfw/main/egern/po0-firewall-whitelist.js
+      script_url: https://raw.githubusercontent.com/schwarzgelben/ggyfw/main/egern/po0-firewall-whitelist.js?v=20261111b
       timeout: 60
       env:
         tokens: "{{{tokens}}}"

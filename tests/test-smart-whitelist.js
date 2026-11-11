@@ -152,14 +152,25 @@ async function main() {
 
   // Test 6: Skip Wi-Fi in Background
   await runTest("Skip Wi-Fi in Background",
-    () => makeSandbox("tokens=tok1&skip_wifi=HomeWiFi", undefined, { wifi: { ssid: "HomeWiFi" } }),
+    () => makeSandbox("tokens=tok1&skip_wifi=HomeWiFi&from=cron", undefined, { wifi: { ssid: "HomeWiFi" } }),
     (sb) => {
       if (httpCalls.length > 0) throw new Error("Should make 0 HTTP calls on skip_wifi");
       if (!doneResult.content.includes("已处于家庭 Wi-Fi")) throw new Error("Content mismatch: " + JSON.stringify(doneResult));
     }
   );
 
-  // Test 7: Direct Whitelist Call does NOT probe 3322 / ip.sb / 1.1.1.1
+  // Test 7: Skip Wi-Fi on Panel STILL displays Traffic!
+  await runTest("Panel on Home Wi-Fi STILL displays Traffic",
+    () => makeSandbox("tokens=tok1&skip_wifi=HomeWiFi&from=panel", undefined, { wifi: { ssid: "HomeWiFi" } }),
+    (sb) => {
+      if (httpCalls.some(u => u.includes("firewall/whitelist"))) throw new Error("Should NOT call whitelist API on home Wi-Fi");
+      if (!httpCalls.some(u => u.includes("traffic/query"))) throw new Error("Should call traffic query API even on home Wi-Fi");
+      if (!doneResult.content.includes("📊 流量: 2.67 GB / 800 GB")) throw new Error("Traffic missing on home Wi-Fi panel: " + doneResult.content);
+      if (!doneResult.content.includes("跳过加白防占坑")) throw new Error("Skip hint missing: " + doneResult.content);
+    }
+  );
+
+  // Test 8: Direct Whitelist Call does NOT probe 3322 / ip.sb / 1.1.1.1
   await runTest("No External IP Sniffing (No 3322 / ip.sb / 1.1.1.1)",
     () => makeSandbox("tokens=tok_clean"),
     (sb) => {

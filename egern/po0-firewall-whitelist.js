@@ -370,7 +370,7 @@ async function queryTraffic(ctx, baseToken, index, multi) {
   const now = Date.now();
   const CACHE_TTL = 5 * 60 * 1000;
 
-  if (cached && now - cachedTs < CACHE_TTL) {
+  if (cached && now - cachedTs < CACHE_TTL && !cached.includes("失败") && !cached.includes("异常")) {
     return cached;
   }
 
@@ -381,16 +381,22 @@ async function queryTraffic(ctx, baseToken, index, multi) {
         "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
       Accept: "application/json, text/plain, */*",
     });
-    if (r.netError) return cached;
+    if (r.netError) return cached || `📊 流量: 查询超时 (${r.netError})`;
     let data = null;
+    let apiMsg = "";
     try {
       const j = JSON.parse(r.text);
-      if (j && (j.status === 200 || j.code === 200) && j.data) {
-        data = j.data;
+      if (j) {
+        apiMsg = j.msg || "";
+        if ((j.status === 200 || j.code === 200) && j.data) {
+          data = j.data;
+        }
       }
-    } catch (e) {}
+    } catch (e) {
+      return cached || `📊 流量: 响应解析失败 (${String(r.text).slice(0, 30)})`;
+    }
 
-    if (!data) return cached;
+    if (!data) return cached || `📊 流量: ${apiMsg || "无数据"}`;
     const parsed = parseTrafficData(data);
     if (parsed && parsed.line) {
       const prefix = multi ? `📊 #${index + 1} ` : "📊 ";
@@ -399,8 +405,10 @@ async function queryTraffic(ctx, baseToken, index, multi) {
       ctx.storage.set(kvTsKey, String(now));
       return line;
     }
-  } catch (e) {}
-  return cached;
+  } catch (e) {
+    return cached || `📊 流量: 请求异常 (${(e && e.message) || e})`;
+  }
+  return cached || "📊 流量: 数据为空";
 }
 
 async function apiCall(ctx, actualToken, uaMode) {
@@ -449,10 +457,11 @@ async function apiCall(ctx, actualToken, uaMode) {
 export default async function (ctx) {
   const skipWifi = ctx.env && ctx.env.skip_wifi;
   const currentSSID = (ctx.device && ctx.device.wifi && ctx.device.wifi.ssid) || "";
+  let onHomeWifi = false;
   if (currentSSID && skipWifi) {
     const skipList = String(skipWifi).split(/[,|;、\s]+/).map(s => s.trim().toLowerCase());
     if (skipList.includes(currentSSID.toLowerCase())) {
-      return;
+      onHomeWifi = true;
     }
   }
 
@@ -479,7 +488,9 @@ export default async function (ctx) {
   const trafficLines = [];
   for (let i = 0; i < tokenItems.length; i++) {
     const item = tokenItems[i];
-    const st = await apiCall(ctx, item.actualToken, uaMode);
+    const st = onHomeWifi
+      ? { applied: true, msg: "家庭 Wi-Fi (跳过加白防占坑)" }
+      : await apiCall(ctx, item.actualToken, uaMode);
     results.push({ item: item, st: st, kvState: STORE_PREFIX + i });
     const traf = await queryTraffic(ctx, item.baseToken, i, tokenItems.length > 1);
     if (traf) trafficLines.push(traf);
@@ -513,7 +524,7 @@ export default async function (ctx) {
   const allOk = okCount === results.length;
   const now = Date.now();
 
-  if (allOk) {
+  if (allOk && !onHomeWifi) {
     ctx.storage.set(STORE_PREFIX + "last_net", currentNet);
     ctx.storage.set(STORE_PREFIX + "last_ts", String(now));
     ctx.storage.set(STORE_PREFIX + "last_ok", "1");
@@ -524,23 +535,25 @@ export default async function (ctx) {
         ctx.storage.set(it.slotKey, String(it.activeSlot));
       }
     });
-  } else {
+  } else if (!onHomeWifi) {
     ctx.storage.set(STORE_PREFIX + "last_ok", "0");
   }
 
-  const title =
-    "GGY 加白 " + okCount + "/" + results.length + (cellular ? " 📶 移动网络" : " 🌐 Wi-Fi");
+  const title = onHomeWifi
+    ? `GGY 加白 · 🌐 Wi-Fi: ${currentSSID || "家庭"}`
+    : `GGY 加白 ${okCount}/${results.length}${cellular ? " 📶 移动网络" : " 🌐 Wi-Fi"}`;
 
-  let content = lines.join("\n");
-  if (trafficLines.length > 0) {
-    content += "\n" + trafficLines.join("\n");
-  }
+  const contentParts = [];
+  if (trafficLines.length > 0) contentParts.push(trafficLines.join("\n"));
+  if (lines.length > 0) contentParts.push(lines.join("\n"));
   if (responseIp) {
     const isMobileUa = uaMode.toLowerCase() !== "pc";
-    content += "\n出口 IP: " + responseIp + (isMobileUa ? " (" + getCSubnet(responseIp) + ")" : " (/32)");
+    contentParts.push("出口 IP: " + responseIp + (isMobileUa ? " (" + getCSubnet(responseIp) + ")" : " (/32)"));
   }
 
-  if (changed || !allOk) {
+  const content = contentParts.join("\n");
+
+  if (!onHomeWifi && (changed || !allOk)) {
     ctx.notify({
       title: "GGY 防火墙加白",
       subtitle: title,

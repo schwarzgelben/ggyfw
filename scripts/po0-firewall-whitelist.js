@@ -155,7 +155,7 @@ function extractToken(raw) {
 }
 
 function parseArgument() {
-  var res = { tokens: "", skip_wifi: "", ua: "mobile", interval: "10", force: "0", slot: "" };
+  var res = { tokens: "", skip_wifi: "", ua: "mobile", interval: "10", force: "0", slot: "", from: "" };
   if (typeof $argument === "undefined" || $argument === null) return res;
 
   // 1. Loon 数组对象传参: [tokens, skip_wifi, ua, slot, interval]
@@ -176,6 +176,7 @@ function parseArgument() {
     if ($argument.interval !== undefined) res.interval = String($argument.interval);
     if ($argument.force !== undefined) res.force = String($argument.force);
     if ($argument.slot !== undefined) res.slot = String($argument.slot);
+    if ($argument.from !== undefined) res.from = String($argument.from);
     return res;
   }
 
@@ -193,6 +194,7 @@ function parseArgument() {
         if (p.interval !== undefined) res.interval = String(p.interval);
         if (p.force !== undefined) res.force = String(p.force);
         if (p.slot !== undefined) res.slot = String(p.slot);
+        if (p.from !== undefined) res.from = String(p.from);
         return res;
       }
     } catch (e) {}
@@ -233,10 +235,11 @@ function parseArgument() {
         var v = decodeURIComponent(pairs[i].slice(eqIdx + 1).trim());
         if (k === "tokens") { res.tokens = v; foundKey = true; }
         else if (k === "skip_wifi") { res.skip_wifi = v; foundKey = true; }
-        else if (k === "ua") { res.ua = v; foundKey = true; }
-        else if (k === "interval") { res.interval = v; foundKey = true; }
+        else if (k === "ua") { res.ua = v || res.ua; foundKey = true; }
+        else if (k === "interval") { res.interval = v || res.interval; foundKey = true; }
         else if (k === "force") { res.force = v; foundKey = true; }
         else if (k === "slot") { res.slot = v; foundKey = true; }
+        else if (k === "from") { res.from = v; foundKey = true; }
       }
     }
     if (foundKey) return res;
@@ -583,8 +586,8 @@ function queryTraffic(baseToken, index, multi) {
   var now = Date.now();
   var CACHE_TTL = 5 * 60 * 1000; // 缓存 5 分钟
 
-  // 命中非强制刷新缓存
-  if (!isManualTap && cached && now - cachedTs < CACHE_TTL) {
+  // 命中非强制刷新缓存且缓存不是错误信息
+  if (!isManualTap && cached && now - cachedTs < CACHE_TTL && cached.indexOf("失败") === -1 && cached.indexOf("异常") === -1) {
     return Promise.resolve(cached);
   }
 
@@ -602,16 +605,27 @@ function queryTraffic(baseToken, index, multi) {
 
   return httpRequest("GET", opts)
     .then(function (r) {
-      if (r.error) return cached;
+      if (r.error) {
+        return cached || ("📊 流量: 查询超时/网络错误 (" + r.error + ")");
+      }
       var data = null;
+      var apiMsg = "";
       try {
         var j = JSON.parse(r.body);
-        if (j && (j.status === 200 || j.code === 200) && j.data) {
-          data = j.data;
+        if (j) {
+          apiMsg = j.msg || "";
+          if ((j.status === 200 || j.code === 200) && j.data) {
+            data = j.data;
+          }
         }
-      } catch (e) {}
+      } catch (e) {
+        return cached || ("📊 流量: 响应解析失败 (" + String(r.body).slice(0, 30) + ")");
+      }
 
-      if (!data) return cached;
+      if (!data) {
+        return cached || ("📊 流量: " + (apiMsg || ("接口状态 " + (j ? j.status : "异常"))));
+      }
+
       var parsed = parseTrafficData(data);
       if (parsed && parsed.line) {
         var prefix = multi ? "📊 #" + (index + 1) + " " : "📊 ";
@@ -620,10 +634,10 @@ function queryTraffic(baseToken, index, multi) {
         storeWrite(String(now), kvTsKey);
         return line;
       }
-      return cached;
+      return cached || "📊 流量: 数据为空";
     })
-    .catch(function () {
-      return cached;
+    .catch(function (err) {
+      return cached || ("📊 流量: 请求异常 (" + describeHttpError(err) + ")");
     });
 }
 
@@ -706,7 +720,7 @@ function describe(index, ctx) {
 
 var argConfig = parseArgument();
 
-// 1. 判断是否手动点击面板刷新
+// 1. 判断是否手动点击刷新或面板触发
 var isManualTap = false;
 try {
   if (typeof $trigger !== "undefined" && $trigger === "button") {
@@ -717,24 +731,39 @@ if (argConfig.force === "1" || argConfig.force === "true") {
   isManualTap = true;
 }
 
-// 2. 家庭 Wi-Fi 防占坑优化：若已在家庭 Wi-Fi 且非手动点击刷新，跳过上报保留配额
+var scriptName = "";
+try {
+  if (typeof $script !== "undefined" && $script && $script.name) {
+    scriptName = String($script.name).toLowerCase();
+  }
+} catch (e) {}
+
+var isPanel =
+  argConfig.from === "panel" ||
+  isManualTap ||
+  scriptName.indexOf("panel") !== -1 ||
+  (typeof $panel !== "undefined");
+
+// 2. 家庭 Wi-Fi 防占坑优化
 var currentSSID = getWifiSSID();
-if (!isManualTap && currentSSID && argConfig.skip_wifi) {
+var onHomeWifi = false;
+if (currentSSID && argConfig.skip_wifi) {
   var skipList = argConfig.skip_wifi.split(/[,|;、\s]+/).map(function (s) {
     return s.trim().toLowerCase();
   });
   if (skipList.indexOf(currentSSID.toLowerCase()) !== -1) {
-    var skipTitle = "GGY 加白 · 🌐 Wi-Fi: " + currentSSID;
-    var skipContent = "已处于家庭 Wi-Fi，软路由固定槽位已覆盖，跳过上报保留配额";
-    finish(skipTitle, skipContent, true);
-  } else {
-    runMain();
+    onHomeWifi = true;
   }
-} else {
-  runMain();
 }
 
-function runMain() {
+// 若在家庭 Wi-Fi 且为纯后台任务（cron 或 network-changed 事件），静默退出不占配额也不打扰
+if (onHomeWifi && !isPanel && !isManualTap && (argConfig.from === "cron" || argConfig.from === "event")) {
+  finish("GGY 加白 · 🌐 Wi-Fi", "已处于家庭 Wi-Fi，跳过加白防占坑", true);
+} else {
+  runMain(onHomeWifi);
+}
+
+function runMain(skipWhitelist) {
   // 解析配置的 tokens 列表（支持逗号、竖线、分号、换行分隔）
   var rawTokens =
     argConfig.tokens ||
@@ -775,14 +804,24 @@ function runMain() {
     return resolveActualToken(t, i, argConfig.slot, netChanged);
   });
 
-  Promise.all([
-    Promise.all(
-      tokenItems.map(function (it, i) {
-        return ensureWhitelisted(it, i, argConfig.ua);
-      })
-    ),
-    fetchAllTraffic(tokenItems),
-  ])
+  // 如果处于家庭 Wi-Fi 下，跳过向咕咕云调用加白 API（保护槽位配额），但依然并行查询最新流量！
+  var whitelistPromise = skipWhitelist
+    ? Promise.resolve(
+        tokenItems.map(function (it, i) {
+          return {
+            st: { applied: true, msg: "家庭 Wi-Fi (跳过加白防占坑)" },
+            item: it,
+            kvState: STORE_PREFIX + i,
+          };
+        })
+      )
+    : Promise.all(
+        tokenItems.map(function (it, i) {
+          return ensureWhitelisted(it, i, argConfig.ua);
+        })
+      );
+
+  Promise.all([whitelistPromise, fetchAllTraffic(tokenItems)])
     .then(function (res) {
       var results = res[0];
       var trafficLines = res[1];
@@ -814,7 +853,7 @@ function runMain() {
       var allOk = okCount === results.length;
       var now = Date.now();
 
-      if (allOk) {
+      if (allOk && !skipWhitelist) {
         storeWrite(currentNet, STORE_PREFIX + "last_net");
         storeWrite(String(now), STORE_PREFIX + "last_ts");
         storeWrite("1", STORE_PREFIX + "last_ok");
@@ -825,26 +864,32 @@ function runMain() {
             storeWrite(String(it.activeSlot), it.slotKey);
           }
         });
-      } else {
+      } else if (!skipWhitelist) {
         storeWrite("0", STORE_PREFIX + "last_ok");
       }
 
-      var title =
-        "GGY 加白 " + okCount + "/" + results.length + (onCellular() ? " 📶 移动网络" : " 🌐 Wi-Fi");
-      var content = lines.join("\n");
+      var title = skipWhitelist
+        ? ("GGY 加白 · 🌐 Wi-Fi: " + (currentSSID || "家庭"))
+        : ("GGY 加白 " + okCount + "/" + results.length + (onCellular() ? " 📶 移动网络" : " 🌐 Wi-Fi"));
 
+      // 组装面板内容：流量第一优先级展示在首行！
+      var contentParts = [];
       var validTraffic = trafficLines.filter(function (s) { return !!s; });
       if (validTraffic.length > 0) {
-        content += "\n" + validTraffic.join("\n");
+        contentParts.push(validTraffic.join("\n"));
       }
-
+      if (lines.length > 0) {
+        contentParts.push(lines.join("\n"));
+      }
       if (responseIp) {
         var isMobileUa = (argConfig.ua || "mobile").toLowerCase() !== "pc";
-        content += "\n出口 IP: " + responseIp + (isMobileUa ? " (" + getCSubnet(responseIp) + ")" : " (/32)");
+        contentParts.push("出口 IP: " + responseIp + (isMobileUa ? " (" + getCSubnet(responseIp) + ")" : " (/32)"));
       }
 
-      // 状态变化、出现失败或手动点击时弹出系统通知
-      if (changed || !allOk || isManualTap) {
+      var content = contentParts.join("\n");
+
+      // 状态变化、出现失败或手动点击时弹出系统通知（家庭 Wi-Fi 自动刷新不弹干扰通知）
+      if (!skipWhitelist && (changed || !allOk || isManualTap)) {
         notify("GGY 防火墙加白", title, content);
       }
       finish(title, content, allOk);

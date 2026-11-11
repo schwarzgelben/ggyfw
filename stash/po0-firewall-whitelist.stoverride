@@ -22,11 +22,11 @@ cron:
     - name: ggy-fw
       cron: '*/10 * * * *'
       timeout: 60
-      argument: tokens=
+      argument: tokens=&traffic_tokens=
 
 tiles:
   - name: ggy-fw
     interval: 300
     title: 咕咕云防火墙加白
     content: 点击刷新
-    argument: tokens=
+    argument: tokens=&traffic_tokens=

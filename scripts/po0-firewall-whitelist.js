@@ -30,6 +30,7 @@ var TRAFFIC_API_BASE = "https://www.guguyun.com/cany_tencentecs/traffic/query?to
 var STORE_PREFIX = "ggy_fw_";
 var TOKENS_KEY = "ggy_tokens";
 var TOKENS_KEY_LEGACY = "po0fw_tokens";
+var TRAFFIC_TOKENS_KEY = "ggy_traffic_tokens";
 
 /* ---------- 环境兼容层 ---------- */
 
@@ -880,7 +881,11 @@ function runMain(skipWhitelist) {
     }
   });
 
-  var effectiveTrafficTokens = argConfig.traffic_tokens || (inlineTrafficTokens.length > 0 ? inlineTrafficTokens.join(",") : "");
+  var effectiveTrafficTokens =
+    argConfig.traffic_tokens ||
+    (inlineTrafficTokens.length > 0 ? inlineTrafficTokens.join(",") : "") ||
+    storeRead(TRAFFIC_TOKENS_KEY) ||
+    "";
   if (whitelistTokens.length > 0 && inlineTrafficTokens.length > 0) {
     tokens = whitelistTokens;
   }

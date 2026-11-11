@@ -30,6 +30,7 @@ API_BASE="${PO0FW_API:-https://www.guguyun.com/cany_tencentecs/firewall/whitelis
 TRAFFIC_API_BASE="${PO0FW_TRAFFIC_API:-https://www.guguyun.com/cany_tencentecs/traffic/query}"
 CONF="${PO0FW_CONF:-/etc/po0fw.conf}"
 SLOT_ARG="${PO0FW_SLOT:-}"
+TRAFFIC_TOKENS="${PO0FW_TRAFFIC_TOKENS:-}"
 
 # 默认使用手机 UA：在固定槽位下使软路由/Linux 获得 /24 大网段放行福利（防宽带重拨断流）
 PO0FW_UA="${PO0FW_UA:-mobile}"
@@ -130,8 +131,13 @@ for entry in $TOKENS; do
     fi
   fi
 
-  # 查询流量信息（使用纯净 base_tok）
-  turl="${TRAFFIC_API_BASE}?token=${base_tok}"
+  # 查询流量信息（使用纯净 base_tok 或独立指定 TRAFFIC_TOKENS）
+  target_traffic_tok="$base_tok"
+  if [ -n "$TRAFFIC_TOKENS" ]; then
+    t_item=$(echo "$TRAFFIC_TOKENS" | awk -F',' -v i="$IDX" '{print $i}' | tr -d ' ')
+    [ -n "$t_item" ] && target_traffic_tok=$(extract_token "$t_item" | sed 's/[@%].*//')
+  fi
+  turl="${TRAFFIC_API_BASE}?token=${target_traffic_tok}"
   tres=$(curl $CURL_OPTS -X GET "$turl" 2>/dev/null || true)
   tstatus=$(echo "$tres" | sed -n 's/.*"status":\([0-9]*\).*/\1/p')
   if [ "$tstatus" = "200" ]; then

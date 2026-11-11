@@ -78,7 +78,8 @@
    https://raw.githubusercontent.com/schwarzgelben/ggyfw/main/surge/po0-firewall-whitelist.sgmodule
    ```
 2. 在模块参数设置中：
-   - `tokens`: 填入你的咕咕云 token 或链接。推荐填入 `token@rotate` 开启 0~4 槽轮换，或 `token@0` 锁定 0 槽。
+   - `tokens`: 填入你的咕咕云加白 token 或链接。推荐填入 `token@rotate` 开启 0~4 槽轮换，或 `token@0` 锁定 0 槽。
+   - `traffic_tokens`: （可选）填入你的咕咕云流量查询 token 或链接（若与加白 token 相同可留空自动复用）。
    - `slot`: （可选）若 tokens 未加 `@`，可在 slot 参数统一指定 `rotate` 或 `0`。
    - `skip_wifi`: （可选）填入你的家庭 Wi-Fi 名称（SSID，如 `MyHome-5G`），连入时跳过上报。
    - `ua`: （可选，默认 `mobile`）。

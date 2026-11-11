@@ -3,6 +3,7 @@
 # 用法: powershell -File po0fw.ps1 -Tokens "token1,token2" [-Slot "0"]
 param(
     [string]$Tokens = $env:PO0FW_TOKENS,
+    [string]$TrafficTokens = $env:PO0FW_TRAFFIC_TOKENS,
     [string]$Slot = $env:PO0FW_SLOT,
     [string]$ApiBase = "https://www.guguyun.com/cany_tencentecs/firewall/whitelist",
     [string]$TrafficApiBase = "https://www.guguyun.com/cany_tencentecs/traffic/query",
@@ -77,8 +78,17 @@ foreach ($entry in $Tokens.Split(',')) {
         }
     }
 
-    # 查询流量信息（使用纯净 baseTok）
-    $tUrl = "$TrafficApiBase`?token=$baseTok"
+    # 查询流量信息（使用纯净 baseTok 或独立指定 TrafficTokens）
+    $targetTrafficTok = $baseTok
+    if ($TrafficTokens) {
+        $tList = $TrafficTokens -split '[,;|\s]+' | Where-Object { $_ -ne "" }
+        if ($tList.Count -ge $idx) {
+            $rawT = $tList[$idx - 1]
+            if ($rawT -match '[?&]token=([^&#\s]+)') { $rawT = $matches[1] }
+            $targetTrafficTok = $rawT -replace '[@%].*$', ''
+        }
+    }
+    $tUrl = "$TrafficApiBase`?token=$targetTrafficTok"
     try {
         $tRes = Invoke-RestMethod -Method Get -Uri $tUrl -TimeoutSec 10 -Headers @{ "Accept" = "application/json"; "User-Agent" = $userAgent }
         if ($tRes.status -eq 200 -and $tRes.data) {

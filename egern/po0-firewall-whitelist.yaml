@@ -6,6 +6,7 @@ homepage: https://github.com/schwarzgelben/ggyfw
 # 安装后在模块参数 tokens 填入咕咕云 token 或分享链接（多台机器用英文逗号分割）。
 compat_arguments:
   tokens: ""
+  skip_wifi: ""
 
 # 加白 API 必须直连，确保服务端看到的是本机真实出口 IP 而不是代理出口
 rules:
@@ -21,10 +22,12 @@ scriptings:
       timeout: 60
       env:
         tokens: "{{{tokens}}}"
+        skip_wifi: "{{{skip_wifi}}}"
   - network:
       name: ggy-fw-network
       script_url: https://raw.githubusercontent.com/schwarzgelben/ggyfw/main/egern/po0-firewall-whitelist.js
       timeout: 60
       env:
         tokens: "{{{tokens}}}"
+        skip_wifi: "{{{skip_wifi}}}"
 

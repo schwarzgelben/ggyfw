@@ -149,30 +149,49 @@ function extractToken(raw) {
   return s;
 }
 
-function getArgumentTokens() {
-  if (typeof $argument === "undefined" || $argument === null) return "";
-  if (typeof $argument === "object") return String($argument.tokens || "");
-  if (typeof $argument === "string" && $argument.length > 0) {
-    if (/^["'].*["']$/.test($argument)) $argument = $argument.slice(1, -1);
-    if ($argument.charAt(0) === "{") {
-      try {
-        var parsed = JSON.parse($argument);
-        if (parsed && parsed.tokens !== undefined) return String(parsed.tokens);
-      } catch (e) {}
-    }
-    // Surge 模块参数格式 tokens=...（避免 split("&") 误切参数里的 URL）
-    if ($argument.indexOf("tokens=") === 0) {
-      return $argument.slice(7);
-    }
-    var pairs = $argument.split("&");
-    for (var i = 0; i < pairs.length; i++) {
-      var idx = pairs[i].indexOf("=");
-      if (idx > 0 && pairs[i].slice(0, idx) === "tokens") {
-        return decodeURIComponent(pairs[i].slice(idx + 1));
-      }
-    }
-    return $argument;
+function parseArgument() {
+  var res = { tokens: "", skip_wifi: "", ua: "mobile" };
+  if (typeof $argument === "undefined" || $argument === null) return res;
+  if (typeof $argument === "object") {
+    if ($argument.tokens !== undefined) res.tokens = String($argument.tokens);
+    if ($argument.skip_wifi !== undefined) res.skip_wifi = String($argument.skip_wifi);
+    if ($argument.ua !== undefined) res.ua = String($argument.ua);
+    return res;
   }
+  var raw = String($argument).trim();
+  if (/^["'].*["']$/.test(raw)) raw = raw.slice(1, -1);
+  if (raw.charAt(0) === "{") {
+    try {
+      var p = JSON.parse(raw);
+      if (p && p.tokens !== undefined) res.tokens = String(p.tokens);
+      if (p && p.skip_wifi !== undefined) res.skip_wifi = String(p.skip_wifi);
+      if (p && p.ua !== undefined) res.ua = String(p.ua);
+      return res;
+    } catch (e) {}
+  }
+  var mWifi = raw.match(/[&?]skip_wifi=([^&]+)/) || raw.match(/^skip_wifi=([^&]+)/);
+  if (mWifi && mWifi[1]) res.skip_wifi = decodeURIComponent(mWifi[1]);
+
+  var mUa = raw.match(/[&?]ua=([^&]+)/) || raw.match(/^ua=([^&]+)/);
+  if (mUa && mUa[1]) res.ua = decodeURIComponent(mUa[1]);
+
+  var mTok = raw.match(/tokens=(.*?)(?:&skip_wifi=|&ua=|$)/);
+  if (mTok && mTok[1]) {
+    res.tokens = decodeURIComponent(mTok[1]);
+  } else if (raw.indexOf("tokens=") === 0) {
+    res.tokens = raw.slice(7);
+  } else if (!mWifi && !mUa) {
+    res.tokens = raw;
+  }
+  return res;
+}
+
+function getWifiSSID() {
+  try {
+    if (typeof $network !== "undefined" && $network && $network.wifi && $network.wifi.ssid) {
+      return String($network.wifi.ssid);
+    }
+  } catch (e) {}
   return "";
 }
 
@@ -203,13 +222,17 @@ function finish(title, content, allOk) {
 
 /* ---------- 业务逻辑 ---------- */
 
-function apiCall(token) {
+function apiCall(token, uaMode) {
   var url = API_BASE + encodeURIComponent(token);
+  var userAgent =
+    uaMode && uaMode.toLowerCase() === "pc"
+      ? "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+      : "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1";
+
   var opts = {
     url: url,
     headers: {
-      "User-Agent":
-        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+      "User-Agent": userAgent,
       Accept: "application/json, text/plain, */*",
     },
   };
@@ -242,11 +265,11 @@ function apiCall(token) {
   });
 }
 
-function ensureWhitelisted(token, index) {
+function ensureWhitelisted(token, index, uaMode) {
   var kvState = STORE_PREFIX + index;
   var ctx = { kvState: kvState, token: token };
 
-  return apiCall(token).then(function (st) {
+  return apiCall(token, uaMode).then(function (st) {
     ctx.st = st;
     return ctx;
   });
@@ -263,9 +286,25 @@ function describe(index, ctx) {
   }
 }
 
+// 解析参数与环境
+var argConfig = parseArgument();
+
+// 家庭 Wi-Fi 防占坑优化：若已在家庭 Wi-Fi，跳过上报以保留宝贵的动态轮换槽位
+var currentSSID = getWifiSSID();
+if (currentSSID && argConfig.skip_wifi) {
+  var skipList = argConfig.skip_wifi.split(/[,|;、\s]+/).map(function (s) {
+    return s.trim().toLowerCase();
+  });
+  if (skipList.indexOf(currentSSID.toLowerCase()) !== -1) {
+    var skipTitle = "GGY 加白 · 🌐 Wi-Fi: " + currentSSID;
+    var skipContent = "已处于家庭 Wi-Fi，软路由固定槽位已覆盖，跳过上报保留配额";
+    finish(skipTitle, skipContent, true);
+  }
+}
+
 // 解析配置的 tokens 列表（支持逗号、竖线、分号、换行分隔）
 var rawTokens =
-  getArgumentTokens() ||
+  argConfig.tokens ||
   storeRead(TOKENS_KEY) ||
   storeRead(TOKENS_KEY_LEGACY) ||
   INLINE_TOKENS ||
@@ -277,7 +316,6 @@ var tokens = rawTokens
     return extractToken(s);
   })
   .filter(function (s) {
-    // 过滤空串及占位提示
     return (
       s.length > 0 &&
       s !== "在此填入token" &&
@@ -295,7 +333,7 @@ if (tokens.length === 0) {
 } else {
   Promise.all(
     tokens.map(function (t, i) {
-      return ensureWhitelisted(t, i);
+      return ensureWhitelisted(t, i, argConfig.ua);
     })
   ).then(function (results) {
     var okCount = 0;

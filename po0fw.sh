@@ -21,7 +21,16 @@ set -u
 
 API_BASE="${PO0FW_API:-https://www.guguyun.com/cany_tencentecs/firewall/whitelist}"
 CONF="${PO0FW_CONF:-/etc/po0fw.conf}"
-CURL_OPTS="-4sS -m 20 --retry 2 --retry-delay 2 -H Accept:application/json"
+
+# 默认使用手机 UA：在固定槽位下使软路由/Linux 获得 /24 大网段放行福利（防宽带重拨断流）
+PO0FW_UA="${PO0FW_UA:-mobile}"
+if [ "$PO0FW_UA" = "pc" ]; then
+  USER_AGENT="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+else
+  USER_AGENT="Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
+fi
+
+CURL_OPTS="-4sS -m 20 --retry 2 --retry-delay 2 -H Accept:application/json -A $USER_AGENT"
 
 MODE="add"
 ARG_TOKENS=""

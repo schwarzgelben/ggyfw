@@ -114,6 +114,20 @@ async function apiCall(ctx, token) {
 }
 
 export default async function (ctx) {
+  const skipWifi = ctx.env && ctx.env.skip_wifi;
+  const currentSSID = (ctx.device && ctx.device.wifi && ctx.device.wifi.ssid) || "";
+  if (currentSSID && skipWifi) {
+    const skipList = String(skipWifi).split(/[,|;、\s]+/).map(s => s.trim().toLowerCase());
+    if (skipList.includes(currentSSID.toLowerCase())) {
+      ctx.notify({
+        title: "GGY 防火墙加白",
+        subtitle: `🌐 Wi-Fi: ${currentSSID}`,
+        body: "已处于信任家庭 Wi-Fi，跳过上报以保留轮换槽位配额",
+      });
+      return;
+    }
+  }
+
   const tokens = parseTokens(ctx.env && ctx.env.tokens);
   if (tokens.length === 0) {
     ctx.notify({

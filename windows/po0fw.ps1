@@ -4,6 +4,7 @@
 param(
     [string]$Tokens = $env:PO0FW_TOKENS,
     [string]$ApiBase = "https://www.guguyun.com/cany_tencentecs/firewall/whitelist",
+    [string]$UaMode = "mobile",
     [switch]$Status
 )
 
@@ -18,6 +19,12 @@ if (-not $Tokens) {
 
 # 强制 TLS1.2+
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 -bor 3072
+
+$userAgent = if ($UaMode -eq "pc") {
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+} else {
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
+}
 
 function Get-GgyToken {
     param([string]$InputStr)
@@ -43,7 +50,7 @@ foreach ($entry in $Tokens.Split(',')) {
     
     $url = "$ApiBase`?token=$tok"
     try {
-        $res = Invoke-RestMethod -Method Get -Uri $url -TimeoutSec 20 -Headers @{ "Accept" = "application/json" }
+        $res = Invoke-RestMethod -Method Get -Uri $url -TimeoutSec 20 -Headers @{ "Accept" = "application/json"; "User-Agent" = $userAgent }
     } catch {
         Write-Host "[po0fw] #$idx [$short…] ❌ 请求异常: $_"
         $fail = $true

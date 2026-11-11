@@ -208,6 +208,18 @@ function resolveActualToken(ctx, rawToken, index, globalSlotArg, shouldAdvanceRo
   };
 }
 
+function formatGb(val) {
+  if (val === null || val === undefined || isNaN(val)) return "";
+  const num = parseFloat(val);
+  if (isNaN(num)) return String(val);
+  if (num >= 1024) return (num / 1024).toFixed(2) + " TB";
+  if (num >= 1) {
+    return (num % 1 === 0 ? num : (num >= 10 ? num.toFixed(1) : num.toFixed(2))) + " GB";
+  }
+  if (num > 0) return (num * 1024).toFixed(1) + " MB";
+  return "0 GB";
+}
+
 function formatTrafficBytes(val, unit) {
   if (val === null || val === undefined || val === "") return "";
   if (typeof val === "string") {
@@ -223,6 +235,7 @@ function formatTrafficBytes(val, unit) {
       if (u === "GB" || u === "G") return val.toFixed(1) + " GB";
       if (u === "MB" || u === "M") return (val >= 1024 ? (val / 1024).toFixed(1) + " GB" : val.toFixed(1) + " MB");
       if (u === "TB" || u === "T") return val.toFixed(2) + " TB";
+      if (u === "KB" || u === "K") return (val >= 1048576 ? (val / 1048576).toFixed(2) + " GB" : (val / 1024).toFixed(1) + " MB");
     }
     if (val >= 1099511627776) return (val / 1099511627776).toFixed(2) + " TB";
     if (val >= 1073741824) return (val / 1073741824).toFixed(2) + " GB";
@@ -242,6 +255,48 @@ function parseTrafficData(data) {
   if (typeof data !== "object") return { line: String(data) };
   if (data.traffic && typeof data.traffic === "object") data = data.traffic;
 
+  // 1. 优先适配咕咕云 v2 官方流量结构 (used_gb / total_gb / remaining_gb / used_transfer)
+  if (data.used_gb !== undefined || data.total_gb !== undefined || data.used_transfer !== undefined) {
+    const unit = (data.unit || "KB").toUpperCase();
+    const factor = unit === "B" ? 1073741824 : (unit === "MB" ? 1024 : 1048576);
+
+    const usedGb = data.used_gb !== undefined ? parseFloat(data.used_gb) :
+                 (data.used_transfer !== undefined ? (parseFloat(data.used_transfer) / factor) : null);
+    const totalGb = data.total_gb !== undefined ? parseFloat(data.total_gb) :
+                  (data.total_transfer !== undefined ? (parseFloat(data.total_transfer) / factor) : null);
+    const restGb = data.remaining_gb !== undefined ? parseFloat(data.remaining_gb) :
+                 (data.remaining_transfer !== undefined ? (parseFloat(data.remaining_transfer) / factor) : null);
+
+    const usedStr = usedGb !== null ? formatGb(usedGb) : "";
+    const totalStr = data.unlimited ? "无限" : (totalGb !== null ? formatGb(totalGb) : "");
+    const restStr = restGb !== null ? formatGb(restGb) : "";
+
+    let pct = "";
+    if (!data.unlimited && usedGb !== null && totalGb !== null && totalGb > 0) {
+      pct = ((usedGb / totalGb) * 100).toFixed(1) + "%";
+    }
+
+    let line = "";
+    if (usedStr && totalStr) {
+      line = `流量: ${usedStr} / ${totalStr}${pct ? ` (${pct})` : ""}`;
+    } else if (usedStr) {
+      line = `已用: ${usedStr}`;
+    }
+
+    if (restStr && !data.unlimited) {
+      line += (line ? " · 余 " : "剩余: ") + restStr;
+    }
+
+    const rawReset = data.reset_date || data.reset_time || data.traffic_reset || data.next_reset || null;
+    if (rawReset) {
+      const resetStr = String(rawReset).replace(/^\d{4}-/, "").replace(/\s.*$/, "");
+      if (resetStr) line += ` · ${resetStr} 重置`;
+    }
+
+    return { line, used: usedStr, total: totalStr, rest: restStr };
+  }
+
+  // 2. 兼容通用或其它旧版结构
   const unit = data.unit || data.traffic_unit || "";
   const rawUsed = data.used !== undefined ? data.used :
                  (data.traffic_used !== undefined ? data.traffic_used :

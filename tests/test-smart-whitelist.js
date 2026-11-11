@@ -31,12 +31,20 @@ function makeSandbox(arg, trigger, network) {
         if (opts.url.includes("traffic/query")) {
           cb(null, { status: 200 }, JSON.stringify({
             status: 200,
-            msg: "查询成功",
+            msg: "请求成功",
             data: {
-              used: "15.3G",
-              total: "1000G",
-              rest: "984.7G",
-              reset_time: "2026-12-01"
+              version: 2,
+              quota_type: "display",
+              unit: "KB",
+              unlimited: false,
+              used_transfer: 2800662,
+              remaining_transfer: 836060138,
+              total_transfer: 838860800,
+              used_gb: 2.670919,
+              remaining_gb: 797.329081,
+              total_gb: 800,
+              queried_at: "2026-11-11T19:00:05+08:00",
+              cached: false
             }
           }));
         } else if (opts.url.includes("guguyun.com")) {
@@ -84,7 +92,7 @@ async function main() {
       if (!httpCalls.some(u => u.includes("traffic/query?token=tok1") && !u.includes("%400") && !u.includes("@0"))) {
         throw new Error("Traffic query did not strip @0 suffix: " + JSON.stringify(httpCalls));
       }
-      if (!doneResult.content.includes("📊 流量: 15.3G / 1000G")) throw new Error("Traffic line missing: " + doneResult.content);
+      if (!doneResult.content.includes("📊 流量: 2.67 GB / 800 GB (0.3%) · 余 797.3 GB")) throw new Error("Traffic line missing: " + doneResult.content);
       if (!doneResult.content.includes("@0")) throw new Error("Slot @0 missing in describe: " + doneResult.content);
       if (!doneResult.content.includes("117.136.32.15")) throw new Error("Response IP missing in content: " + doneResult.content);
     }

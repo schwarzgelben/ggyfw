@@ -83,12 +83,23 @@ foreach ($entry in $Tokens.Split(',')) {
         $tRes = Invoke-RestMethod -Method Get -Uri $tUrl -TimeoutSec 10 -Headers @{ "Accept" = "application/json"; "User-Agent" = $userAgent }
         if ($tRes.status -eq 200 -and $tRes.data) {
             $d = $tRes.data
-            $u = if ($d.used) { $d.used } else { $d.traffic_used }
-            $tot = if ($d.total) { $d.total } else { $d.traffic_total }
-            $rst = if ($d.reset_time) { $d.reset_time } else { $d.reset_date }
-            if ($u -and $tot) {
-                $rstInfo = if ($rst) { " · 重置: $rst" } else { "" }
-                Write-Host "[po0fw] #$idx [$short…] 📊 流量: $u / $tot$rstInfo"
+            $uGb = if ($d.used_gb -ne $null) { [math]::Round([double]$d.used_gb, 2) } elseif ($d.used_transfer -ne $null) { [math]::Round([double]$d.used_transfer / 1048576, 2) } else { $null }
+            $totGb = if ($d.total_gb -ne $null) { [math]::Round([double]$d.total_gb, 1) } elseif ($d.total_transfer -ne $null) { [math]::Round([double]$d.total_transfer / 1048576, 1) } else { $null }
+            $remGb = if ($d.remaining_gb -ne $null) { [math]::Round([double]$d.remaining_gb, 1) } elseif ($d.remaining_transfer -ne $null) { [math]::Round([double]$d.remaining_transfer / 1048576, 1) } else { $null }
+            $rst = if ($d.reset_time) { $d.reset_time } elseif ($d.reset_date) { $d.reset_date } else { $null }
+            $rstInfo = if ($rst) { " · 重置: $rst" } else { "" }
+
+            if ($uGb -ne $null -and ($totGb -ne $null -or $d.unlimited -eq $true)) {
+                $totStr = if ($d.unlimited -eq $true) { "无限" } else { "${totGb} GB" }
+                $pct = if ($totGb -and $totGb -gt 0 -and $d.unlimited -ne $true) { " (" + [math]::Round(($uGb / $totGb) * 100, 1) + "%)" } else { "" }
+                $remStr = if ($remGb -ne $null -and $d.unlimited -ne $true) { " · 余 ${remGb} GB" } else { "" }
+                Write-Host "[po0fw] #$idx [$short…] 📊 流量: ${uGb} GB / ${totStr}${pct}${remStr}${rstInfo}"
+            } else {
+                $u = if ($d.used) { $d.used } else { $d.traffic_used }
+                $tot = if ($d.total) { $d.total } else { $d.traffic_total }
+                if ($u -and $tot) {
+                    Write-Host "[po0fw] #$idx [$short…] 📊 流量: $u / $tot$rstInfo"
+                }
             }
         }
     } catch {}

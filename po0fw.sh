@@ -135,11 +135,25 @@ for entry in $TOKENS; do
   tres=$(curl $CURL_OPTS -X GET "$turl" 2>/dev/null || true)
   tstatus=$(echo "$tres" | sed -n 's/.*"status":\([0-9]*\).*/\1/p')
   if [ "$tstatus" = "200" ]; then
-    tused=$(echo "$tres" | sed -n 's/.*"used":"\([^"]*\)".*/\1/p')
-    ttotal=$(echo "$tres" | sed -n 's/.*"total":"\([^"]*\)".*/\1/p')
-    treset=$(echo "$tres" | sed -n 's/.*"reset_time":"\([^"]*\)".*/\1/p')
-    if [ -n "$tused" ] && [ -n "$ttotal" ]; then
-      log "#$IDX [${short}…] 📊 流量: ${tused} / ${ttotal}${treset:+ · 重置: $treset}"
+    tused_gb=$(echo "$tres" | sed -n 's/.*"used_gb":\([0-9.]*\).*/\1/p')
+    ttotal_gb=$(echo "$tres" | sed -n 's/.*"total_gb":\([0-9.]*\).*/\1/p')
+    trem_gb=$(echo "$tres" | sed -n 's/.*"remaining_gb":\([0-9.]*\).*/\1/p')
+    tunlimited=$(echo "$tres" | sed -n 's/.*"unlimited":\([a-z]*\).*/\1/p')
+    treset=$(echo "$tres" | sed -n 's/.*"reset_\(time\|date\)":"\([^"]*\)".*/\2/p')
+
+    if [ -n "$tused_gb" ] && [ -n "$ttotal_gb" ]; then
+      u_disp=$(printf "%.2f" "$tused_gb" 2>/dev/null || echo "$tused_gb")
+      tot_disp=$(printf "%.0f" "$ttotal_gb" 2>/dev/null || echo "$ttotal_gb")
+      rem_disp=""
+      [ -n "$trem_gb" ] && rem_disp=" · 余 $(printf "%.1f" "$trem_gb" 2>/dev/null || echo "$trem_gb") GB"
+      [ "$tunlimited" = "true" ] && tot_disp="无限" && rem_disp=""
+      log "#$IDX [${short}…] 📊 流量: ${u_disp} GB / ${tot_disp} GB${rem_disp}${treset:+ · 重置: $treset}"
+    else
+      tused=$(echo "$tres" | sed -n 's/.*"used":"\([^"]*\)".*/\1/p')
+      ttotal=$(echo "$tres" | sed -n 's/.*"total":"\([^"]*\)".*/\1/p')
+      if [ -n "$tused" ] && [ -n "$ttotal" ]; then
+        log "#$IDX [${short}…] 📊 流量: ${tused} / ${ttotal}${treset:+ · 重置: $treset}"
+      fi
     fi
   fi
 

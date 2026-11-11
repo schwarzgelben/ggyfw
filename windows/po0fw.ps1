@@ -1,4 +1,4 @@
-﻿#requires -Version 5.1
+#requires -Version 5.1
 # po0fw - GGY (咕咕云) 防火墙自动加白 (Windows)
 # 用法: powershell -File po0fw.ps1 -Tokens "token1,token2"
 param(

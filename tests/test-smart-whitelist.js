@@ -95,8 +95,8 @@ async function main() {
     }
   );
 
-  // Test 2: Rotation Slot Mode (@rotate across 0..5)
-  await runTest("Slot Rotation Mode (@rotate)",
+  // Test 2: Rotation Slot Mode (@rotate across 0..4)
+  await runTest("Slot Rotation Mode (@rotate across 0..4)",
     () => makeSandbox("tokens=tok_rot@rotate&ua=mobile"),
     (sb) => {
       // First run should use slot 0

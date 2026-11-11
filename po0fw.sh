@@ -9,7 +9,7 @@
 #   ./po0fw.sh traffic                                   # 单独查询流量
 #
 # 槽位支持:
-#   在 token 末尾追加 @0~@5（固定槽位）或 @rotate（轮流写入 0~5 槽）
+#   在 token 末尾追加 @0~@4（固定槽位）或 @rotate（轮流写入 0~4 槽）
 #   或设置环境变量 PO0FW_SLOT="0" 或 PO0FW_SLOT="rotate"
 #
 # 配置文件（可选，优先级低于环境变量/参数）: /etc/po0fw.conf 内容示例:

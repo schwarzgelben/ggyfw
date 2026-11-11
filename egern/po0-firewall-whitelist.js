@@ -5,7 +5,7 @@
  * 流量：GET https://www.guguyun.com/cany_tencentecs/traffic/query?token=<token>
  *
  * 槽位支持：
- * 1. 固定槽位：token@0 ~ token@5 或参数 slot=0
+ * 1. 固定槽位：token@0 ~ token@4 或参数 slot=0
  * 2. 轮流写入：token@rotate 或参数 slot=rotate
  */
 
@@ -128,7 +128,7 @@ function parseSlotConfig(tokenStr, globalSlotArg) {
   let baseToken = tokenStr;
   let slotMode = "";
   let fixedSlot = 0;
-  let rotateSlots = [0, 1, 2, 3, 4, 5];
+  let rotateSlots = [0, 1, 2, 3, 4];
 
   const atIdx = tokenStr.lastIndexOf("@");
   if (atIdx !== -1) {
@@ -139,7 +139,7 @@ function parseSlotConfig(tokenStr, globalSlotArg) {
       fixedSlot = parseInt(atVal, 10);
     } else if (atVal === "rotate" || atVal === "auto") {
       slotMode = "rotate";
-      rotateSlots = [0, 1, 2, 3, 4, 5];
+      rotateSlots = [0, 1, 2, 3, 4];
     } else if (/^(\d+)-(\d+)$/.test(atVal)) {
       const mRange = atVal.match(/^(\d+)-(\d+)$/);
       const start = parseInt(mRange[1], 10);
@@ -157,7 +157,7 @@ function parseSlotConfig(tokenStr, globalSlotArg) {
       fixedSlot = parseInt(g, 10);
     } else if (g === "rotate" || g === "auto") {
       slotMode = "rotate";
-      rotateSlots = [0, 1, 2, 3, 4, 5];
+      rotateSlots = [0, 1, 2, 3, 4];
     } else if (/^(\d+)-(\d+)$/.test(g)) {
       const mG = g.match(/^(\d+)-(\d+)$/);
       const sG = parseInt(mG[1], 10);

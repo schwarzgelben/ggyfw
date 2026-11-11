@@ -5,13 +5,13 @@
  * 加白端点：GET https://www.guguyun.com/cany_tencentecs/firewall/whitelist?token=<token>
  * 流量端点：GET https://www.guguyun.com/cany_tencentecs/traffic/query?token=<token>
  *
- * 槽位支持（固定槽位 @0~@5 与轮换写入）：
- * 1. 固定槽位写入：在 token 末尾追加 @0 ~ @5（例如 token@0），或指定参数 slot=0。
+ * 槽位支持（固定槽位 @0~@4 与轮换写入）：
+ * 1. 固定槽位写入：在 token 末尾追加 @0 ~ @4（例如 token@0），或指定参数 slot=0。
  *    每个固定槽位在手机 UA 下放行对应基站的整段 /24 网段。
- * 2. 轮流写入（环形槽位池）：指定 token@rotate（或 token@0-5 / 参数 slot=rotate）。
- *    每次检测到跨基站网段漂移（新 C 段）时，自动轮换写入下一个槽位（0 -> 1 -> 2 -> 3 -> 4 -> 5 -> 0）。
- *    这使得用户最近经过的 6 个基站网段同时保持加白，多地点往返无缝零断流！
- * 3. 流量查询自动脱敏：查询流量时自动剥离 @0~@5 后缀，保证流量接口稳定命中。
+ * 2. 轮流写入（环形槽位池）：指定 token@rotate（或 token@0-4 / 参数 slot=rotate）。
+ *    每次检测到跨基站网段漂移（新 C 段）时，自动轮换写入下一个槽位（0 -> 1 -> 2 -> 3 -> 4 -> 0）。
+ *    这使得用户最近经过的 5 个基站网段同时保持加白，多地点往返无缝零断流！
+ * 3. 流量查询自动脱敏：查询流量时自动剥离 @0~@4 后缀，保证流量接口稳定命中。
  *
  * 智能探活与自愈机制（方案 1）：
  * 1. 识别手机 UA（ua=mobile，默认）：固定槽位链接放行整段 /24（256个IP）。
@@ -377,7 +377,7 @@ function parseSlotConfig(tokenStr, globalSlotArg) {
   var baseToken = tokenStr;
   var slotMode = ""; // "" (默认自动轮换/未指定) | "fixed" | "rotate"
   var fixedSlot = 0;
-  var rotateSlots = [0, 1, 2, 3, 4, 5];
+  var rotateSlots = [0, 1, 2, 3, 4];
 
   // 1. 优先从单个 token 字符串自身解析后缀 @...
   var atIdx = tokenStr.lastIndexOf("@");
@@ -389,7 +389,7 @@ function parseSlotConfig(tokenStr, globalSlotArg) {
       fixedSlot = parseInt(atVal, 10);
     } else if (atVal === "rotate" || atVal === "auto") {
       slotMode = "rotate";
-      rotateSlots = [0, 1, 2, 3, 4, 5];
+      rotateSlots = [0, 1, 2, 3, 4];
     } else if (/^(\d+)-(\d+)$/.test(atVal)) {
       var mRange = atVal.match(/^(\d+)-(\d+)$/);
       var start = parseInt(mRange[1], 10);
@@ -409,7 +409,7 @@ function parseSlotConfig(tokenStr, globalSlotArg) {
       fixedSlot = parseInt(g, 10);
     } else if (g === "rotate" || g === "auto") {
       slotMode = "rotate";
-      rotateSlots = [0, 1, 2, 3, 4, 5];
+      rotateSlots = [0, 1, 2, 3, 4];
     } else if (/^(\d+)-(\d+)$/.test(g)) {
       var mG = g.match(/^(\d+)-(\d+)$/);
       var sG = parseInt(mG[1], 10);
@@ -587,7 +587,7 @@ function queryTraffic(baseToken, index, multi) {
     return Promise.resolve(cached);
   }
 
-  // 流量查询接口必须使用纯净 baseToken（不含 @0~5 后缀）
+  // 流量查询接口必须使用纯净 baseToken（不含 @0~4 后缀）
   var url = TRAFFIC_API_BASE + encodeURIComponent(baseToken);
   var opts = {
     url: url,

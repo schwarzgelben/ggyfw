@@ -8,7 +8,7 @@
  *
  * 智能探活与自愈机制（方案 1）：
  * 1. 识别手机 UA（ua=mobile，默认）：固定槽位链接放行整段 /24（256个IP）。
- * 2. 轻量公网 IP 嗅探：直连探测本机出口公网 IP（直连 3322.net / ip.sb / 1.1.1.1）。
+ * 2. 轻量公网 IP 嗅探：直连探测本机出口公网 IP（直连 3322.net / ip.sb / ipip.net / 1.1.1.1）。
  * 3. 同 C 段智能节流：若当前出口 IP 与上次加白 IP 处于同一 /24 网段且在保活期内，
  *    判定为安全组已放行，自动跳过咕咕云 API 请求（零频次消耗、零断流）。
  * 4. 越界秒级自愈：每 2 分钟高频 cron 探活，一旦检测到基站 IP 跳出 /24 网段，
@@ -20,6 +20,8 @@
  * DOMAIN,www.guguyun.com,DIRECT
  * DOMAIN-SUFFIX,3322.net,DIRECT
  * DOMAIN-SUFFIX,ip.sb,DIRECT
+ * DOMAIN-SUFFIX,ipip.net,DIRECT
+ * IP-CIDR,1.1.1.1/32,DIRECT,no-resolve
  * DOMAIN,1.1.1.1,DIRECT
  *
  * token 来源（优先级从高到低）：
@@ -161,6 +163,17 @@ function extractToken(raw) {
 function parseArgument() {
   var res = { tokens: "", skip_wifi: "", ua: "mobile", interval: "10", force: "0" };
   if (typeof $argument === "undefined" || $argument === null) return res;
+
+  // 1. Loon 数组对象传参
+  if (Array.isArray($argument)) {
+    if ($argument[0] !== undefined) res.tokens = String($argument[0]);
+    if ($argument[1] !== undefined) res.skip_wifi = String($argument[1]);
+    if ($argument[2] !== undefined) res.ua = String($argument[2]);
+    if ($argument[3] !== undefined) res.interval = String($argument[3]);
+    return res;
+  }
+
+  // 2. 普通 Object
   if (typeof $argument === "object") {
     if ($argument.tokens !== undefined) res.tokens = String($argument.tokens);
     if ($argument.skip_wifi !== undefined) res.skip_wifi = String($argument.skip_wifi);
@@ -169,8 +182,11 @@ function parseArgument() {
     if ($argument.force !== undefined) res.force = String($argument.force);
     return res;
   }
+
   var raw = String($argument).trim();
-  if (/^["'].*["']$/.test(raw)) raw = raw.slice(1, -1);
+  if (/^["'].*["']$/.test(raw)) raw = raw.slice(1, -1).trim();
+
+  // 3. JSON Object 字符串: {"tokens":"..."}
   if (raw.charAt(0) === "{") {
     try {
       var p = JSON.parse(raw);
@@ -184,6 +200,30 @@ function parseArgument() {
       }
     } catch (e) {}
   }
+
+  // 4. JSON Array 或中括号语法 (Loon argument=[...]): ["tok", "wifi", "mobile"]
+  if (raw.charAt(0) === "[") {
+    try {
+      var arr = JSON.parse(raw);
+      if (Array.isArray(arr)) {
+        if (arr[0] !== undefined) res.tokens = String(arr[0]);
+        if (arr[1] !== undefined) res.skip_wifi = String(arr[1]);
+        if (arr[2] !== undefined) res.ua = String(arr[2]);
+        if (arr[3] !== undefined) res.interval = String(arr[3]);
+        return res;
+      }
+    } catch (e) {
+      var inner = raw.slice(1, -1).trim();
+      var parts = inner.split(",");
+      if (parts[0] !== undefined) res.tokens = parts[0].trim();
+      if (parts[1] !== undefined) res.skip_wifi = parts[1].trim();
+      if (parts[2] !== undefined) res.ua = parts[2].trim();
+      if (parts[3] !== undefined) res.interval = parts[3].trim();
+      return res;
+    }
+  }
+
+  // 5. Query string 语法: tokens=xxx&skip_wifi=yyy&ua=mobile
   if (raw.indexOf("=") !== -1) {
     var pairs = raw.split("&");
     var foundKey = false;
@@ -201,6 +241,8 @@ function parseArgument() {
     }
     if (foundKey) return res;
   }
+
+  // 6. 单个纯 token 字符串
   res.tokens = raw;
   return res;
 }
@@ -241,23 +283,45 @@ function finish(title, content, allOk) {
 
 /* ---------- 公网 IP 探测与网段比较 ---------- */
 
+function isValidIPv4(ip) {
+  return /^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/.test(ip);
+}
+
 function extractIPv4(text) {
   if (!text) return "";
-  var m = String(text).match(/\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b/);
-  return m ? m[0] : "";
+  var s = String(text).trim();
+
+  // 1. 优先针对 1.1.1.1/cdn-cgi/trace 的特定响应：匹配 ip=x.x.x.x，避免误取 h=1.1.1.1
+  var mTrace = s.match(/(?:^|\n)ip=([0-9.]+)/);
+  if (mTrace && mTrace[1]) {
+    var traceIp = mTrace[1].trim();
+    if (isValidIPv4(traceIp)) return traceIp;
+  }
+
+  // 2. 通用 IPv4 匹配
+  var m = s.match(/\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b/);
+  if (m && m[0]) {
+    // 排除探测目标服务器本身的 IP
+    if (m[0] !== "1.1.1.1" && m[0] !== "1.0.0.1" && m[0] !== "8.8.8.8" && m[0] !== "127.0.0.1" && m[0] !== "0.0.0.0") {
+      return m[0];
+    }
+  }
+  return "";
 }
 
 function sameC24(ip1, ip2) {
   if (!ip1 || !ip2) return false;
-  var seg1 = ip1.split(".");
-  var seg2 = ip2.split(".");
+  var s1 = String(ip1).trim();
+  var s2 = String(ip2).trim();
+  var seg1 = s1.split(".");
+  var seg2 = s2.split(".");
   if (seg1.length !== 4 || seg2.length !== 4) return false;
   return seg1[0] === seg2[0] && seg1[1] === seg2[1] && seg1[2] === seg2[2];
 }
 
 function getCSubnet(ip) {
   if (!ip) return "";
-  var seg = ip.split(".");
+  var seg = String(ip).trim().split(".");
   if (seg.length !== 4) return ip;
   return seg[0] + "." + seg[1] + "." + seg[2] + ".0/24";
 }
@@ -266,6 +330,7 @@ function detectPublicIp() {
   var probeUrls = [
     "http://ip.3322.net",
     "http://api-ipv4.ip.sb/ip",
+    "http://myip.ipip.net",
     "https://1.1.1.1/cdn-cgi/trace"
   ];
   var probeTimeout = isLoon || isQX ? 4000 : 4;
@@ -377,9 +442,9 @@ if (argConfig.force === "1" || argConfig.force === "true") {
   isManualTap = true;
 }
 
-// 2. 家庭 Wi-Fi 防占坑优化：若已在家庭 Wi-Fi，跳过上报以保留宝贵的动态轮换槽位
+// 2. 家庭 Wi-Fi 防占坑优化：若已在家庭 Wi-Fi 且非手动点击刷新，跳过上报保留配额
 var currentSSID = getWifiSSID();
-if (currentSSID && argConfig.skip_wifi) {
+if (!isManualTap && currentSSID && argConfig.skip_wifi) {
   var skipList = argConfig.skip_wifi.split(/[,|;、\s]+/).map(function (s) {
     return s.trim().toLowerCase();
   });
@@ -387,7 +452,7 @@ if (currentSSID && argConfig.skip_wifi) {
     var skipTitle = "GGY 加白 · 🌐 Wi-Fi: " + currentSSID;
     var skipContent = "已处于家庭 Wi-Fi，软路由固定槽位已覆盖，跳过上报保留配额";
     finish(skipTitle, skipContent, true);
-    // 直接退出
+    // 直接退出，不继续执行 runMain
   } else {
     runMain();
   }

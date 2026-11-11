@@ -13,6 +13,8 @@ ua = select,"mobile","mobile","pc",tag=UA 模拟模式,desc=mobile 模拟手机�
 DOMAIN,www.guguyun.com,DIRECT
 DOMAIN-SUFFIX,3322.net,DIRECT
 DOMAIN-SUFFIX,ip.sb,DIRECT
+DOMAIN-SUFFIX,ipip.net,DIRECT
+IP-CIDR,1.1.1.1/32,DIRECT,no-resolve
 DOMAIN,1.1.1.1,DIRECT
 
 [Script]

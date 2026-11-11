@@ -1,6 +1,6 @@
 # GGY 防火墙自动加白与流量监控 (po0fw)
 
-咕咕云 (GGY) 腾讯云/魔方防火墙安全组白名单自动加白与实例流量监控 —— 支持 Surge、Loon、Shadowrocket、Stash、Quantumult X、Egern，以及 PC（Linux / macOS / Windows）、安卓 Termux、软路由（OpenWrt / Kwrt）。
+咕咕云 (GGY) 腾讯云/魔方防火墙安全组白名单自动加白与实例流量监控 —— 支持 Surge、Egern，以及 PC（Linux / macOS / Windows）、安卓 Termux。
 
 ## 原理与最佳实践
 
@@ -24,7 +24,7 @@
 
 ### 📊 面板流量自动适配
 
-客户端面板会自动调用咕咕云流量接口，获取实例的**已用流量、总流量、用量占比及月度重置日期**，并在 Surge / Loon / Egern 面板中优雅呈现：
+客户端面板会自动调用咕咕云流量接口，获取实例的**已用流量、总流量、用量占比及月度重置日期**，并在 Surge / Egern 面板中优雅呈现：
 ```text
 出口 IP: 117.136.32.15 (117.136.32.0/24)
 槽位状态: 轮换 @0 (共 5 槽)
@@ -44,7 +44,7 @@
 
 因此最佳配置推荐：
 1. **手机客户端（Surge 等）**：分配使用**【固定槽位链接】**（填 `token@rotate` 轮流写入，或 `token@0` 固定写入，默认手机 UA），直接放行当前基站整个 `/24` 网段。手机在同区域或同基站漂移时（最后一位跳变）完全不断流！
-2. **家庭软路由 / 电脑**：分配使用**【自动轮换链接】**（不加 `@`）。家庭宽带公网 IP 极为稳定，几天才变一次，`/32` 足够且不浪费固定槽位。
+2. **家庭路由 / 电脑**：分配使用**【自动轮换链接】**（不加 `@`）。家庭宽带公网 IP 极为稳定，几天才变一次，`/32` 足够且不浪费固定槽位。
 3. **智能节流与保活机制**：
    - 默认 10 分钟定时保活与 `network-changed` 网络变化即时上报，配合客户端面板随时查看实时流量与手动一键刷新。
    - **网络漫游自动自愈**：手机在 Wi-Fi 与蜂窝数据切换或网络变更时立即触发加白，保持连接畅通。
@@ -54,9 +54,8 @@
 
 | 平台 | 方案 | 触发方式 |
 |---|---|---|
-| iOS/Mac 代理客户端 | 本仓库脚本模块：Surge / Loon / Stash / QX / Shadowrocket / Egern | network-changed 即时 + 定时保活 + 面板实时流量与刷新 |
+| iOS/Mac 代理客户端 | 本仓库脚本模块：Surge / Egern | network-changed 即时 + 定时保活 + 面板实时流量与刷新 |
 | Linux / macOS | 本仓库 shell 脚本 | systemd timer / cron 每 10 分钟，支持 `./po0fw.sh traffic` |
-| OpenWrt / Kwrt 软路由 | 本仓库 shell 脚本 | cron + hotplug WAN 重连秒级触发 |
 | Windows | 本仓库 PowerShell | 计划任务：10 分钟 + 网络事件，支持流量与槽位参数 |
 | 安卓 | Termux / MacroDroid / HTTP Shortcuts | 网络切换 + 定时 |
 
@@ -65,10 +64,6 @@
 | 客户端 | 载体 | 配置说明 |
 |---|---|---|
 | **Surge** | `surge/po0-firewall-whitelist.sgmodule` | 模块参数 `tokens` 填入固定槽位 token（支持 `token@rotate` 或 `token@0`） |
-| **Loon** | `loon/po0-firewall-whitelist.plugin` | 插件参数 `tokens` 填入 token 或完整链接，支持 `slot` 槽位管理 |
-| **Stash** | `stash/po0-firewall-whitelist.stoverride` | 覆写内填入 token 或完整链接 |
-| **Shadowrocket** | `shadowrocket/po0-firewall-whitelist.srmodule` | 模块文本中替换 `tokens=` |
-| **Quantumult X** | `quantumultx/po0-firewall-whitelist.snippet` | BoxJs key `ggy_tokens` 或配置 task |
 | **Egern** | `egern/po0-firewall-whitelist.yaml` | 模块参数 `tokens` 与 `slot` |
 
 ### Surge 安装使用
@@ -87,19 +82,12 @@
 
 ---
 
-## 桌面与软路由安装
+## 桌面安装
 
 ### Linux / macOS / 安卓 Termux
 
 ```sh
 curl -sSL https://raw.githubusercontent.com/schwarzgelben/ggyfw/main/install-linux.sh | PO0FW_TOKENS="你的token@0或分享链接" sh
-```
-
-### OpenWrt / Kwrt 软路由
-
-```sh
-curl -sSL https://raw.githubusercontent.com/schwarzgelben/ggyfw/main/openwrt/install-openwrt.sh -o /tmp/i.sh
-PO0FW_TOKENS="你的token或分享链接" sh /tmp/i.sh
 ```
 
 ### Windows

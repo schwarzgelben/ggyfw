@@ -1,10 +1,10 @@
 # iOS 自动加白
 
-## 方案一：Surge / 代理客户端脚本模块（推荐）
+## 方案一：Surge / Egern 客户端脚本模块（推荐）
 
-如果你在使用 Surge / Loon / Stash / Quantumult X / Shadowrocket / Egern，本仓库自带完整模块，支持面板显示、Wi-Fi / 蜂窝网络自适应、network-changed 事件即时触发 + 定时巡检：
+如果你在使用 Surge / Egern，本仓库自带完整模块，支持面板显示、Wi-Fi / 蜂窝网络自适应、network-changed 事件即时触发 + 定时巡检：
 
-👉 模块文件位于本仓库 `surge/po0-firewall-whitelist.sgmodule`，已内置直连分流规则 `DOMAIN,www.guguyun.com,DIRECT`。
+👉 模块文件位于本仓库 `surge/po0-firewall-whitelist.sgmodule` 与 `egern/po0-firewall-whitelist.yaml`，已内置直连分流规则 `DOMAIN,www.guguyun.com,DIRECT`。
 
 ## 方案二：快捷指令（无需代理 App）
 

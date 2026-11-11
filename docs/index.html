@@ -243,7 +243,7 @@ footer a{color:var(--ink2)}
         </div>
         <div class="tip">
           <div class="th">🖥 多台机器一次填完</div>
-          <div class="tb">多台机器的 token 用<b>英文逗号</b>拼起来填一处即可（Shadowrocket / Quantumult X 也支持 <code>|</code> 分隔）：<code>token1,token2</code>。设备换 IP 时所有机器同时更新。</div>
+          <div class="tb">多台机器的 token 用<b>英文逗号</b>拼起来填一处即可：<code>token1,token2</code>。设备换 IP 时所有机器同时更新。</div>
         </div>
       </div>
     </div>
@@ -251,24 +251,13 @@ footer a{color:var(--ink2)}
     <div style="height:34px"></div>
 
     <div class="seg" id="tabs">
-      <button class="on" data-pane="router">软路由 ⭐</button>
-      <button data-pane="pc">PC</button>
+      <button class="on" data-pane="pc">PC ⭐</button>
       <button data-pane="android">安卓</button>
       <button data-pane="ios">iOS / Mac</button>
     </div>
 
-    <!-- 软路由 -->
-    <div class="pane on" id="pane-router">
-      <div class="stepline"><span class="no">1</span><h3>SSH 登录路由器，执行安装命令</h3></div>
-      <div class="cb"><button class="cp">复制</button><pre>curl -sSL https://raw.githubusercontent.com/schwarzgelben/ggyfw/main/openwrt/install-openwrt.sh -o /tmp/i.sh
-PO0FW_TOKENS="<span class="tk" data-t>你的token</span>" sh /tmp/i.sh</pre></div>
-      <div class="stepline"><span class="no">2</span><h3>完成 —— 已自动配置双触发</h3></div>
-      <div class="stepbody">cron 每 10 分钟兜底 + WAN 拨号/重连事件<b>秒级</b>加白。跑一次 <code>po0fw</code> 验证，日志在 <code>/tmp/po0fw.log</code>。</div>
-      <div class="note"><b>为什么最推荐装这里：</b>只有路由器能第一时间感知家宽重拨；且全家设备连 Wi-Fi 都被它覆盖，手机电脑就不用再各装一份。</div>
-    </div>
-
     <!-- PC -->
-    <div class="pane" id="pane-pc">
+    <div class="pane on" id="pane-pc">
       <div class="stepline"><span class="no">1</span><h3>Linux / macOS —— 一条命令</h3></div>
       <div class="cb"><button class="cp">复制</button><pre>curl -sSL https://raw.githubusercontent.com/schwarzgelben/ggyfw/main/install-linux.sh | PO0FW_TOKENS="<span class="tk" data-t>你的token</span>" sh</pre></div>
       <div class="stepbody">root 自动注册 systemd timer；macOS / 非 root 写入 crontab，均为每 10 分钟。</div>
@@ -302,29 +291,9 @@ powershell -ExecutionPolicy Bypass -File i.ps1 -Tokens "<span class="tk" data-t>
           <div class="acts"><a class="bi" data-scheme="surge:///install-module?url={U}" data-file="surge/po0-firewall-whitelist.sgmodule">一键安装</a><button class="bc" data-file="surge/po0-firewall-whitelist.sgmodule">复制链接</button></div>
         </div>
         <div class="card">
-          <div class="hd"><img src="icons/loon.png" alt="Loon"><div><div class="nm">Loon</div><div class="ct">iOS · plugin</div></div></div>
-          <div class="desc2">安装后进插件设置，在 API tokens 输入框填入 token。可在「脚本」列表手动执行立即加白。</div>
-          <div class="acts"><a class="bi" data-scheme="loon://import?plugin={U}" data-file="loon/po0-firewall-whitelist.plugin">一键安装</a><button class="bc" data-file="loon/po0-firewall-whitelist.plugin">复制链接</button></div>
-        </div>
-        <div class="card">
-          <div class="hd"><img src="icons/stash.png" alt="Stash"><div><div class="nm">Stash</div><div class="ct">iOS · stoverride</div></div></div>
-          <div class="desc2">安装后编辑覆写，把两处 argument: tokens= 补全。附手动刷新磁贴。</div>
-          <div class="acts"><a class="bi" data-scheme="stash://install-override?url={U}" data-file="stash/po0-firewall-whitelist.stoverride">一键安装</a><button class="bc" data-file="stash/po0-firewall-whitelist.stoverride">复制链接</button></div>
-        </div>
-        <div class="card">
-          <div class="hd"><img src="icons/shadowrocket.png" alt="Shadowrocket"><div><div class="nm">Shadowrocket</div><div class="ct">iOS · srmodule</div></div></div>
-          <div class="desc2">SR 不支持参数模板：装好后长按模块 → <b>编辑纯文本</b>，把两行 <code>argument=tokens=</code> 后的占位替换成你的 token（多台机器用 | 分割）。</div>
-          <div class="acts"><a class="bi" data-scheme="shadowrocket://install?module={U}" data-file="shadowrocket/po0-firewall-whitelist.srmodule">一键安装</a><button class="bc" data-file="shadowrocket/po0-firewall-whitelist.srmodule">复制链接</button></div>
-        </div>
-        <div class="card">
           <div class="hd"><img src="icons/egern.png" alt="Egern"><div><div class="nm">Egern</div><div class="ct">iOS / Mac · 原生模块</div></div></div>
           <div class="desc2">安装后在模块参数 tokens 填入 token（多台机器英文逗号分割）。</div>
           <div class="acts"><a class="bi" data-scheme="egern:/modules/new?url={U}" data-file="egern/po0-firewall-whitelist.yaml">一键安装</a><button class="bc" data-file="egern/po0-firewall-whitelist.yaml">复制链接</button></div>
-        </div>
-        <div class="card">
-          <div class="hd"><img src="icons/quantumultx.png" alt="Quantumult X"><div><div class="nm">Quantumult X</div><div class="ct">iOS · task 片段</div></div></div>
-          <div class="desc2">QX 不支持远程订阅定时任务：复制片段手动加进 [task_local]；token 用 BoxJs 写 key po0fw_tokens。</div>
-          <div class="acts"><button class="bc" style="flex:1" data-file="quantumultx/po0-firewall-whitelist.snippet">复制片段链接</button></div>
         </div>
       </div>
       <div class="warn" style="margin-left:0"><b>一键按钮没反应？</b>部分浏览器会拦截 App 跳转 —— 点「复制链接」，到客户端里「从 URL 安装 / 导入」即可。</div>
@@ -339,7 +308,7 @@ powershell -ExecutionPolicy Bypass -File i.ps1 -Tokens "<span class="tk" data-t>
   <div class="wrap">
     <div class="eyebrow">What you get</div>
     <h2>装完之后</h2>
-    <p class="desc">无需任何操作：切网即时、每 10 分钟自动检查，出口变了才真正写入。支持面板的客户端（Surge / Stash / Egern）长这样：</p>
+    <p class="desc">无需任何操作：切网即时、每 10 分钟自动检查，出口变了才真正写入。支持面板的客户端（Surge / Egern）长这样：</p>
     <div class="preview">
       <div class="terminal">
         <div class="bar"><i></i><i></i><i></i></div>
@@ -386,11 +355,11 @@ powershell -ExecutionPolicy Bypass -File i.ps1 -Tokens "<span class="tk" data-t>
     <div class="eyebrow">FAQ</div>
     <h2>常见问题</h2>
     <div class="faq" style="margin-top:26px">
-      <details><summary>Wi-Fi 连着没断、公网 IP 变了（家宽重拨），能发现吗？</summary><div class="bd">切网事件抓不到这种静默变更，靠<b>定时兜底</b>：各端 10–15 分钟周期照常上报。且家宽重拨大多在同一 /24 段内，本来就无需重新加白。真正的兜底主力是软路由 —— 它能感知 WAN 重拨事件秒级加白。</div></details>
-      <details><summary>多台机器怎么配？</summary><div class="bd">每台机器 token 不同，用<b>英文逗号</b>拼起来填一处即可（Shadowrocket / QX 也支持 <code>|</code>）：<code>token1,token2</code>。设备换 IP 后所有机器的白名单同时更新。</div></details>
+      <details><summary>Wi-Fi 连着没断、公网 IP 变了（家宽重拨），能发现吗？</summary><div class="bd">切网事件抓不到这种静默变更，靠<b>定时兜底</b>：各端 10–15 分钟周期照常上报。且家宽重拨大多在同一 /24 段内，本来就无需重新加白。</div></details>
+      <details><summary>多台机器怎么配？</summary><div class="bd">每台机器 token 不同，用<b>英文逗号</b>拼起来填一处即可：<code>token1,token2</code>。设备换 IP 后所有机器的白名单同时更新。</div></details>
       <details><summary>走代理时会把代理节点 IP 加白吗？</summary><div class="bd">不会：iOS 代理模块已内置直连分流规则 <code>DOMAIN,www.guguyun.com,DIRECT</code>，确保请求不会经由代理节点发送，服务端识别并加白的始终是本机当前的真实公网出口 IP。</div></details>
       <details><summary>token 安全吗？</summary><div class="bd">token 即该机器的加白凭证，请勿公开分享。本页填写的 token 只保存在你的浏览器 localStorage，不会上传；仓库与模块不包含任何 token。</div></details>
-      <details><summary>怎么卸载？</summary><div class="bd">OpenWrt：删除 <code>/usr/bin/po0fw</code>、<code>/etc/po0fw.conf</code>、<code>/etc/hotplug.d/iface/99-po0fw</code> 并清理 crontab · Linux：<code>systemctl disable --now po0fw.timer</code> 后删相关文件 · Windows：任务计划程序删「po0fw」· 手机端：删对应模块 / 宏 / 自动化。</div></details>
+      <details><summary>怎么卸载？</summary><div class="bd">Linux：<code>systemctl disable --now po0fw.timer</code> 后删相关文件 · Windows：任务计划程序删「po0fw」· 手机端：删对应模块 / 宏 / 自动化。</div></details>
     </div>
   </div>
 </section>

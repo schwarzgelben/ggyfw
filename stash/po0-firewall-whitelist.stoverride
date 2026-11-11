@@ -1,13 +1,17 @@
 name: GGY 咕咕云防火墙自动加白
 desc: |-
-  调用咕咕云 (GGY) 防火墙白名单链接将本机当前出口 IP 自动加入安全组白名单。支持多 token（英文逗号分割），
-  每 10 分钟 cron 自动触发，附手动刷新磁贴。安装后把下方两处 argument 的
-  tokens= 后面填上咕咕云 token 或完整分享链接。
+  调用咕咕云 (GGY) 防火墙白名单链接将出口 IP 自动加入安全组，并展示实时流量。
+  支持固定槽位 (@0~@4)、环形轮换写入、每 2 分钟极速自愈与磁贴手动刷新。
+  安装后把下方两处 argument 的 tokens= 后面填上咕咕云 token 或完整分享链接（支持 token@0 或 token@rotate）。
 category: 咕咕云
 icon: https://raw.githubusercontent.com/Koolson/Qure/master/IconSet/Color/Panel.png
 
 rules:
   - DOMAIN,www.guguyun.com,DIRECT
+  - DOMAIN-SUFFIX,3322.net,DIRECT
+  - DOMAIN-SUFFIX,ip.sb,DIRECT
+  - DOMAIN-SUFFIX,ipip.net,DIRECT
+  - IP-CIDR,1.1.1.1/32,DIRECT,no-resolve
 
 http:
   mitm: []
@@ -20,14 +24,13 @@ script-providers:
 cron:
   script:
     - name: ggy-fw
-      cron: '*/10 * * * *'
+      cron: '*/2 * * * *'
       timeout: 60
       argument: tokens=
 
 tiles:
   - name: ggy-fw
-    interval: 300
+    interval: 120
     title: 咕咕云防火墙加白
     content: 点击刷新
     argument: tokens=
-

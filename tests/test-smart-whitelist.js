@@ -103,9 +103,8 @@ async function main() {
       if (!httpCalls.some(u => u.includes("token=tok_rot%400") || u.includes("token=tok_rot@0"))) {
         throw new Error("Whitelist API should use slot @0 on initial run: " + JSON.stringify(httpCalls));
       }
-      // Pointer should advance to 1 for the next run
-      if (store["ggy_fw_slot_ptr_0"] !== "1") {
-        throw new Error("Slot pointer should advance to 1, got: " + store["ggy_fw_slot_ptr_0"]);
+      if (store["ggy_fw_slot_active_0"] !== "0") {
+        throw new Error("Slot active should be 0, got: " + store["ggy_fw_slot_active_0"]);
       }
     }
   );
@@ -114,7 +113,7 @@ async function main() {
   await runTest("Slot Rotation Advances on Subnet Drift",
     () => {
       const sb = makeSandbox("tokens=tok_rot@rotate&ua=mobile");
-      store["ggy_fw_slot_ptr_0"] = "1";
+      store["ggy_fw_slot_active_0"] = "0";
       store["ggy_fw_last_ip"] = "117.136.32.15";
       store["ggy_fw_last_ts"] = String(Date.now() - 2 * 60 * 1000);
       store["ggy_fw_last_ok"] = "1";
@@ -134,8 +133,8 @@ async function main() {
       if (!httpCalls.some(u => u.includes("token=tok_rot%401") || u.includes("token=tok_rot@1"))) {
         throw new Error("Whitelist API should use slot @1 on second drift: " + JSON.stringify(httpCalls));
       }
-      if (store["ggy_fw_slot_ptr_0"] !== "2") {
-        throw new Error("Slot pointer should advance to 2, got: " + store["ggy_fw_slot_ptr_0"]);
+      if (store["ggy_fw_slot_active_0"] !== "1") {
+        throw new Error("Slot active should be 1 after drift, got: " + store["ggy_fw_slot_active_0"]);
       }
     }
   );

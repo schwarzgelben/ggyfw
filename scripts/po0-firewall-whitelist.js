@@ -435,24 +435,33 @@ function parseSlotConfig(tokenStr, globalSlotArg) {
   };
 }
 
-function resolveActualToken(rawToken, index, globalSlotArg) {
+function resolveActualToken(rawToken, index, globalSlotArg, isSubnetDrift) {
   var cfg = parseSlotConfig(rawToken, globalSlotArg);
-  var pointerKey = STORE_PREFIX + "slot_ptr_" + index;
-  var currentPtr = parseInt(storeRead(pointerKey) || "0", 10);
-  if (isNaN(currentPtr) || currentPtr < 0 || currentPtr >= cfg.rotateSlots.length) {
-    currentPtr = 0;
-  }
+  var slotKey = STORE_PREFIX + "slot_active_" + index;
+  var storedSlot = storeRead(slotKey);
 
   var actualToken = cfg.baseToken;
   var slotLabel = "";
   var activeSlot = null;
 
   if (cfg.slotMode === "fixed") {
+    activeSlot = cfg.fixedSlot;
     actualToken = cfg.baseToken + "@" + cfg.fixedSlot;
     slotLabel = "@" + cfg.fixedSlot;
-    activeSlot = cfg.fixedSlot;
   } else if (cfg.slotMode === "rotate") {
-    activeSlot = cfg.rotateSlots[currentPtr];
+    var slotIdx = 0;
+    if (storedSlot !== null && storedSlot !== undefined && storedSlot !== "") {
+      var lastSlotNum = parseInt(storedSlot, 10);
+      var pos = cfg.rotateSlots.indexOf(lastSlotNum);
+      if (pos === -1) pos = 0;
+      if (isSubnetDrift) {
+        pos = (pos + 1) % cfg.rotateSlots.length;
+      }
+      slotIdx = pos;
+    } else {
+      slotIdx = 0;
+    }
+    activeSlot = cfg.rotateSlots[slotIdx];
     actualToken = cfg.baseToken + "@" + activeSlot;
     slotLabel = "@" + activeSlot + "(轮换)";
   }
@@ -464,9 +473,8 @@ function resolveActualToken(rawToken, index, globalSlotArg) {
     slotMode: cfg.slotMode,
     slotLabel: slotLabel,
     activeSlot: activeSlot,
-    currentPtr: currentPtr,
     rotateSlots: cfg.rotateSlots,
-    pointerKey: pointerKey,
+    slotKey: slotKey,
   };
 }
 
@@ -766,11 +774,6 @@ function runMain() {
     return;
   }
 
-  // 将 rawToken 解析为槽位管理对象
-  var tokenItems = tokens.map(function (t, i) {
-    return resolveActualToken(t, i, argConfig.slot);
-  });
-
   // 探测公网出口 IP
   detectPublicIp()
     .then(function (currentIp) {
@@ -780,6 +783,16 @@ function runMain() {
       var maxAgeMs = (parseInt(argConfig.interval, 10) || 10) * 60 * 1000;
       var now = Date.now();
       var isMobileUa = (argConfig.ua || "mobile").toLowerCase() !== "pc";
+
+      var ipDrift =
+        lastIp &&
+        currentIp &&
+        (isMobileUa ? !sameC24(currentIp, lastIp) : currentIp !== lastIp);
+
+      // 将 rawToken 解析为槽位管理对象（根据是否漂移决定是否轮换至下一槽位）
+      var tokenItems = tokens.map(function (t, i) {
+        return resolveActualToken(t, i, argConfig.slot, ipDrift);
+      });
 
       var canSkip = false;
       var skipSubnet = "";
@@ -858,23 +871,14 @@ function runMain() {
           if (currentIp) storeWrite(currentIp, STORE_PREFIX + "last_ip");
           storeWrite(String(now), STORE_PREFIX + "last_ts");
           storeWrite("1", STORE_PREFIX + "last_ok");
-        } else {
-          storeWrite("0", STORE_PREFIX + "last_ok");
-        }
 
-        var ipDrift =
-          lastIp &&
-          currentIp &&
-          (isMobileUa ? !sameC24(currentIp, lastIp) : currentIp !== lastIp);
-
-        // 当请求成功且发生跨网段漂移（或首次上报）时，轮换模式推进至下一个槽位！
-        if (allOk && (ipDrift || !lastIp)) {
           tokenItems.forEach(function (it) {
-            if (it.slotMode === "rotate") {
-              var nextPtr = (it.currentPtr + 1) % it.rotateSlots.length;
-              storeWrite(String(nextPtr), it.pointerKey);
+            if (it.slotMode === "rotate" && it.activeSlot !== null) {
+              storeWrite(String(it.activeSlot), it.slotKey);
             }
           });
+        } else {
+          storeWrite("0", STORE_PREFIX + "last_ok");
         }
 
         var title =

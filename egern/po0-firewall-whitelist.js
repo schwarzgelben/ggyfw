@@ -171,13 +171,10 @@ function parseSlotConfig(tokenStr, globalSlotArg) {
   return { baseToken, slotMode, fixedSlot, rotateSlots };
 }
 
-function resolveActualToken(ctx, rawToken, index, globalSlotArg) {
+function resolveActualToken(ctx, rawToken, index, globalSlotArg, isSubnetDrift) {
   const cfg = parseSlotConfig(rawToken, globalSlotArg);
-  const pointerKey = STORE_PREFIX + "slot_ptr_" + index;
-  let currentPtr = parseInt(ctx.storage.get(pointerKey) || "0", 10);
-  if (isNaN(currentPtr) || currentPtr < 0 || currentPtr >= cfg.rotateSlots.length) {
-    currentPtr = 0;
-  }
+  const slotKey = STORE_PREFIX + "slot_active_" + index;
+  const storedSlot = ctx.storage.get(slotKey);
 
   let actualToken = cfg.baseToken;
   let slotLabel = "";
@@ -188,7 +185,19 @@ function resolveActualToken(ctx, rawToken, index, globalSlotArg) {
     slotLabel = `@${cfg.fixedSlot}`;
     activeSlot = cfg.fixedSlot;
   } else if (cfg.slotMode === "rotate") {
-    activeSlot = cfg.rotateSlots[currentPtr];
+    let slotIdx = 0;
+    if (storedSlot !== null && storedSlot !== undefined && storedSlot !== "") {
+      const lastSlotNum = parseInt(storedSlot, 10);
+      let pos = cfg.rotateSlots.indexOf(lastSlotNum);
+      if (pos === -1) pos = 0;
+      if (isSubnetDrift) {
+        pos = (pos + 1) % cfg.rotateSlots.length;
+      }
+      slotIdx = pos;
+    } else {
+      slotIdx = 0;
+    }
+    activeSlot = cfg.rotateSlots[slotIdx];
     actualToken = `${cfg.baseToken}@${activeSlot}`;
     slotLabel = `@${activeSlot}(轮换)`;
   }
@@ -200,9 +209,8 @@ function resolveActualToken(ctx, rawToken, index, globalSlotArg) {
     slotMode: cfg.slotMode,
     slotLabel: slotLabel,
     activeSlot: activeSlot,
-    currentPtr: currentPtr,
     rotateSlots: cfg.rotateSlots,
-    pointerKey: pointerKey,
+    slotKey: slotKey,
   };
 }
 
@@ -426,8 +434,6 @@ export default async function (ctx) {
   }
 
   const globalSlot = (ctx.env && ctx.env.slot) || "";
-  const tokenItems = tokens.map((t, i) => resolveActualToken(ctx, t, i, globalSlot));
-
   const uaMode = (ctx.env && ctx.env.ua) || "mobile";
   const isMobileUa = uaMode.toLowerCase() !== "pc";
   const currentIp = await detectPublicIp(ctx);
@@ -437,6 +443,9 @@ export default async function (ctx) {
   const lastOk = ctx.storage.get(STORE_PREFIX + "last_ok") === "1";
   const now = Date.now();
   const maxAgeMs = (parseInt((ctx.env && ctx.env.interval) || "10", 10) || 10) * 60 * 1000;
+
+  const ipDrift = lastIp && currentIp && (isMobileUa ? !sameC24(currentIp, lastIp) : currentIp !== lastIp);
+  const tokenItems = tokens.map((t, i) => resolveActualToken(ctx, t, i, globalSlot, ipDrift));
 
   // 智能探活节流：同 /24 且保活期内跳过 API 请求
   if (lastOk && currentIp && lastIp && now - lastTs < maxAgeMs) {
@@ -475,21 +484,17 @@ export default async function (ctx) {
   }
 
   const allOk = okCount === results.length;
-  const ipDrift = lastIp && currentIp && (isMobileUa ? !sameC24(currentIp, lastIp) : currentIp !== lastIp);
 
   if (allOk) {
     if (currentIp) ctx.storage.set(STORE_PREFIX + "last_ip", currentIp);
     ctx.storage.set(STORE_PREFIX + "last_ts", String(now));
     ctx.storage.set(STORE_PREFIX + "last_ok", "1");
 
-    if (ipDrift || !lastIp) {
-      tokenItems.forEach(it => {
-        if (it.slotMode === "rotate") {
-          const nextPtr = (it.currentPtr + 1) % it.rotateSlots.length;
-          ctx.storage.set(it.pointerKey, String(nextPtr));
-        }
-      });
-    }
+    tokenItems.forEach(it => {
+      if (it.slotMode === "rotate" && it.activeSlot !== null) {
+        ctx.storage.set(it.slotKey, String(it.activeSlot));
+      }
+    });
   } else {
     ctx.storage.set(STORE_PREFIX + "last_ok", "0");
   }

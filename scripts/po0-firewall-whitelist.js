@@ -6,9 +6,21 @@
  * 行为：调用咕咕云魔方插件白名单分享链接，将当前请求来源 IP 自动加入防火墙安全组白名单。
  * 响应：{"status":200,"msg":"...","data":[]} / {"status":400,"msg":"白名单分享链接无效或已失效","data":[]}
  *
+ * 智能探活与自愈机制（方案 1）：
+ * 1. 识别手机 UA（ua=mobile，默认）：固定槽位链接放行整段 /24（256个IP）。
+ * 2. 轻量公网 IP 嗅探：直连探测本机出口公网 IP（直连 3322.net / ip.sb / 1.1.1.1）。
+ * 3. 同 C 段智能节流：若当前出口 IP 与上次加白 IP 处于同一 /24 网段且在保活期内，
+ *    判定为安全组已放行，自动跳过咕咕云 API 请求（零频次消耗、零断流）。
+ * 4. 越界秒级自愈：每 2 分钟高频 cron 探活，一旦检测到基站 IP 跳出 /24 网段，
+ *    立即发起咕咕云加白请求，将新网段加入防火墙，实现无感自愈。
+ * 5. 手动刷新：点击面板按钮立即强制重新加白并刷新状态。
+ *
  * 分流注意：
- * 加白请求必须直连！必须配置分流规则：DOMAIN,www.guguyun.com,DIRECT
- * 否则请求经由代理节点发出，会把代理节点落地 IP 加白，导致本机失效。
+ * 加白请求与 IP 嗅探必须直连！必须配置分流规则：
+ * DOMAIN,www.guguyun.com,DIRECT
+ * DOMAIN-SUFFIX,3322.net,DIRECT
+ * DOMAIN-SUFFIX,ip.sb,DIRECT
+ * DOMAIN,1.1.1.1,DIRECT
  *
  * token 来源（优先级从高到低）：
  * 1. argument: tokens=<token 或完整 URL>（Surge/Loon/Stash 模块参数，支持多 token 逗号或换行分割）
@@ -116,8 +128,7 @@ function isRetryableServerError(r) {
   if (r.status >= 200 && r.status < 300) return false;
   try {
     var j = JSON.parse(r.body);
-    // 明确的业务错误（如 status 400 token失效）不重试
-    if (j && j.status === 400) return false;
+    if (j && j.status === 400) return false; // 明确业务错误不重试
     return false;
   } catch (e) {
     return true; // 非 JSON 响应属于瞬时网络/反代异常
@@ -141,21 +152,21 @@ function httpRequest(method, opts, attempt) {
 function extractToken(raw) {
   if (!raw) return "";
   var s = String(raw).trim();
-  // 兼容输入完整 URL 的情况：提取 ?token=xxx 或 &token=xxx
   var m = s.match(/[?&]token=([^&#\s]+)/);
   if (m && m[1]) return decodeURIComponent(m[1]);
-  // 若传入的是 URL 但未提取出有效 token（如只传了前缀），返回空以避免误将 URL 当作 token
   if (/^https?:\/\//i.test(s)) return "";
   return s;
 }
 
 function parseArgument() {
-  var res = { tokens: "", skip_wifi: "", ua: "mobile" };
+  var res = { tokens: "", skip_wifi: "", ua: "mobile", interval: "10", force: "0" };
   if (typeof $argument === "undefined" || $argument === null) return res;
   if (typeof $argument === "object") {
     if ($argument.tokens !== undefined) res.tokens = String($argument.tokens);
     if ($argument.skip_wifi !== undefined) res.skip_wifi = String($argument.skip_wifi);
     if ($argument.ua !== undefined) res.ua = String($argument.ua);
+    if ($argument.interval !== undefined) res.interval = String($argument.interval);
+    if ($argument.force !== undefined) res.force = String($argument.force);
     return res;
   }
   var raw = String($argument).trim();
@@ -163,26 +174,34 @@ function parseArgument() {
   if (raw.charAt(0) === "{") {
     try {
       var p = JSON.parse(raw);
-      if (p && p.tokens !== undefined) res.tokens = String(p.tokens);
-      if (p && p.skip_wifi !== undefined) res.skip_wifi = String(p.skip_wifi);
-      if (p && p.ua !== undefined) res.ua = String(p.ua);
-      return res;
+      if (p) {
+        if (p.tokens !== undefined) res.tokens = String(p.tokens);
+        if (p.skip_wifi !== undefined) res.skip_wifi = String(p.skip_wifi);
+        if (p.ua !== undefined) res.ua = String(p.ua);
+        if (p.interval !== undefined) res.interval = String(p.interval);
+        if (p.force !== undefined) res.force = String(p.force);
+        return res;
+      }
     } catch (e) {}
   }
-  var mWifi = raw.match(/[&?]skip_wifi=([^&]+)/) || raw.match(/^skip_wifi=([^&]+)/);
-  if (mWifi && mWifi[1]) res.skip_wifi = decodeURIComponent(mWifi[1]);
-
-  var mUa = raw.match(/[&?]ua=([^&]+)/) || raw.match(/^ua=([^&]+)/);
-  if (mUa && mUa[1]) res.ua = decodeURIComponent(mUa[1]);
-
-  var mTok = raw.match(/tokens=(.*?)(?:&skip_wifi=|&ua=|$)/);
-  if (mTok && mTok[1]) {
-    res.tokens = decodeURIComponent(mTok[1]);
-  } else if (raw.indexOf("tokens=") === 0) {
-    res.tokens = raw.slice(7);
-  } else if (!mWifi && !mUa) {
-    res.tokens = raw;
+  if (raw.indexOf("=") !== -1) {
+    var pairs = raw.split("&");
+    var foundKey = false;
+    for (var i = 0; i < pairs.length; i++) {
+      var eqIdx = pairs[i].indexOf("=");
+      if (eqIdx !== -1) {
+        var k = pairs[i].slice(0, eqIdx).trim();
+        var v = decodeURIComponent(pairs[i].slice(eqIdx + 1).trim());
+        if (k === "tokens") { res.tokens = v; foundKey = true; }
+        else if (k === "skip_wifi") { res.skip_wifi = v; foundKey = true; }
+        else if (k === "ua") { res.ua = v; foundKey = true; }
+        else if (k === "interval") { res.interval = v; foundKey = true; }
+        else if (k === "force") { res.force = v; foundKey = true; }
+      }
+    }
+    if (foundKey) return res;
   }
+  res.tokens = raw;
   return res;
 }
 
@@ -220,7 +239,64 @@ function finish(title, content, allOk) {
   });
 }
 
-/* ---------- 业务逻辑 ---------- */
+/* ---------- 公网 IP 探测与网段比较 ---------- */
+
+function extractIPv4(text) {
+  if (!text) return "";
+  var m = String(text).match(/\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b/);
+  return m ? m[0] : "";
+}
+
+function sameC24(ip1, ip2) {
+  if (!ip1 || !ip2) return false;
+  var seg1 = ip1.split(".");
+  var seg2 = ip2.split(".");
+  if (seg1.length !== 4 || seg2.length !== 4) return false;
+  return seg1[0] === seg2[0] && seg1[1] === seg2[1] && seg1[2] === seg2[2];
+}
+
+function getCSubnet(ip) {
+  if (!ip) return "";
+  var seg = ip.split(".");
+  if (seg.length !== 4) return ip;
+  return seg[0] + "." + seg[1] + "." + seg[2] + ".0/24";
+}
+
+function detectPublicIp() {
+  var probeUrls = [
+    "http://ip.3322.net",
+    "http://api-ipv4.ip.sb/ip",
+    "https://1.1.1.1/cdn-cgi/trace"
+  ];
+  var probeTimeout = isLoon || isQX ? 4000 : 4;
+
+  function probeAt(idx) {
+    if (idx >= probeUrls.length) return Promise.resolve("");
+    var targetUrl = probeUrls[idx];
+    var opts = {
+      url: targetUrl,
+      headers: { "User-Agent": "curl/7.88.1" }
+    };
+    if (REQUEST_TIMEOUT !== null) {
+      opts.timeout = probeTimeout;
+    }
+    return httpRequestOnce("GET", opts)
+      .then(function (r) {
+        if (!r.error && r.body) {
+          var ip = extractIPv4(r.body);
+          if (ip) return ip;
+        }
+        return probeAt(idx + 1);
+      })
+      .catch(function () {
+        return probeAt(idx + 1);
+      });
+  }
+
+  return probeAt(0);
+}
+
+/* ---------- 业务加白逻辑 ---------- */
 
 function apiCall(token, uaMode) {
   var url = API_BASE + encodeURIComponent(token);
@@ -286,10 +362,22 @@ function describe(index, ctx) {
   }
 }
 
-// 解析参数与环境
+/* ---------- 流程执行 ---------- */
+
 var argConfig = parseArgument();
 
-// 家庭 Wi-Fi 防占坑优化：若已在家庭 Wi-Fi，跳过上报以保留宝贵的动态轮换槽位
+// 1. 判断是否手动点击面板刷新
+var isManualTap = false;
+try {
+  if (typeof $trigger !== "undefined" && $trigger === "button") {
+    isManualTap = true;
+  }
+} catch (e) {}
+if (argConfig.force === "1" || argConfig.force === "true") {
+  isManualTap = true;
+}
+
+// 2. 家庭 Wi-Fi 防占坑优化：若已在家庭 Wi-Fi，跳过上报以保留宝贵的动态轮换槽位
 var currentSSID = getWifiSSID();
 if (currentSSID && argConfig.skip_wifi) {
   var skipList = argConfig.skip_wifi.split(/[,|;、\s]+/).map(function (s) {
@@ -299,72 +387,141 @@ if (currentSSID && argConfig.skip_wifi) {
     var skipTitle = "GGY 加白 · 🌐 Wi-Fi: " + currentSSID;
     var skipContent = "已处于家庭 Wi-Fi，软路由固定槽位已覆盖，跳过上报保留配额";
     finish(skipTitle, skipContent, true);
+    // 直接退出
+  } else {
+    runMain();
   }
-}
-
-// 解析配置的 tokens 列表（支持逗号、竖线、分号、换行分隔）
-var rawTokens =
-  argConfig.tokens ||
-  storeRead(TOKENS_KEY) ||
-  storeRead(TOKENS_KEY_LEGACY) ||
-  INLINE_TOKENS ||
-  "";
-
-var tokens = rawTokens
-  .split(/[,|;、\r\n\s]+/)
-  .map(function (s) {
-    return extractToken(s);
-  })
-  .filter(function (s) {
-    return (
-      s.length > 0 &&
-      s !== "在此填入token" &&
-      s.indexOf("你的token") === -1
-    );
-  });
-
-if (tokens.length === 0) {
-  notify(
-    "GGY 防火墙加白",
-    "未配置 token",
-    "请在模块参数 tokens 填入咕咕云白名单 token 或完整分享链接"
-  );
-  finish("GGY 加白：未配置 token", "请在模块参数填入 token 或链接，多个用逗号分割", false);
 } else {
-  Promise.all(
-    tokens.map(function (t, i) {
-      return ensureWhitelisted(t, i, argConfig.ua);
-    })
-  ).then(function (results) {
-    var okCount = 0;
-    var lines = [];
-    var changed = false;
-
-    for (var i = 0; i < results.length; i++) {
-      var st = results[i].st;
-      if (st.applied) okCount++;
-      lines.push(describe(i, results[i]));
-
-      var state = (st.applied ? "1" : "0") + "|" + (st.msg || st.error || "");
-      if (storeRead(results[i].kvState) !== state) {
-        storeWrite(state, results[i].kvState);
-        changed = true;
-      }
-    }
-
-    var allOk = okCount === results.length;
-    var title =
-      "GGY 加白 " + okCount + "/" + results.length + (onCellular() ? " 📶 移动网络" : " 🌐 Wi-Fi");
-    var content = lines.join("\n");
-
-    // 状态变化或存在失败时弹出系统通知
-    if (changed || !allOk) {
-      notify("GGY 防火墙加白", title, content);
-    }
-    finish(title, content, allOk);
-  }).catch(function (e) {
-    notify("GGY 防火墙加白", "脚本异常", String(e && e.message ? e.message : e));
-    finish("GGY 加白：脚本异常", String(e && e.message ? e.message : e), false);
-  });
+  runMain();
 }
 
+function runMain() {
+  // 解析配置的 tokens 列表（支持逗号、竖线、分号、换行分隔）
+  var rawTokens =
+    argConfig.tokens ||
+    storeRead(TOKENS_KEY) ||
+    storeRead(TOKENS_KEY_LEGACY) ||
+    INLINE_TOKENS ||
+    "";
+
+  var tokens = rawTokens
+    .split(/[,|;、\r\n\s]+/)
+    .map(function (s) {
+      return extractToken(s);
+    })
+    .filter(function (s) {
+      return (
+        s.length > 0 &&
+        s !== "在此填入token" &&
+        s.indexOf("你的token") === -1
+      );
+    });
+
+  if (tokens.length === 0) {
+    notify(
+      "GGY 防火墙加白",
+      "未配置 token",
+      "请在模块参数 tokens 填入咕咕云白名单 token 或完整分享链接"
+    );
+    finish("GGY 加白：未配置 token", "请在模块参数填入 token 或链接，多个用逗号分割", false);
+    return;
+  }
+
+  // 探测公网出口 IP
+  detectPublicIp()
+    .then(function (currentIp) {
+      var lastIp = storeRead(STORE_PREFIX + "last_ip") || "";
+      var lastTs = parseInt(storeRead(STORE_PREFIX + "last_ts") || "0", 10);
+      var lastOk = storeRead(STORE_PREFIX + "last_ok") === "1";
+      var maxAgeMs = (parseInt(argConfig.interval, 10) || 10) * 60 * 1000;
+      var now = Date.now();
+      var isMobileUa = (argConfig.ua || "mobile").toLowerCase() !== "pc";
+
+      var canSkip = false;
+      var skipSubnet = "";
+
+      // 智能探活节流：在同一 /24 网段内且心跳未超时，跳过向咕咕云重复调用
+      if (!isManualTap && lastOk && currentIp && lastIp && now - lastTs < maxAgeMs) {
+        if (isMobileUa) {
+          if (sameC24(currentIp, lastIp)) {
+            canSkip = true;
+            skipSubnet = getCSubnet(currentIp);
+          }
+        } else {
+          if (currentIp === lastIp) {
+            canSkip = true;
+            skipSubnet = currentIp + "/32";
+          }
+        }
+      }
+
+      if (canSkip) {
+        var minsAgo = Math.max(0, Math.floor((now - lastTs) / 60000));
+        var title = "GGY 加白 · 放行中" + (onCellular() ? " 📶 移动网络" : " 🌐 Wi-Fi");
+        var content =
+          "出口 IP: " + currentIp + "\n" +
+          "放行网段: " + skipSubnet + " (无需重报)\n" +
+          "心跳保活: 持续有效 (" + (minsAgo === 0 ? "刚刚" : minsAgo + " 分钟前") + ")";
+        finish(title, content, true);
+        return;
+      }
+
+      // 越界自愈或保活上报：调用咕咕云加白 API
+      return Promise.all(
+        tokens.map(function (t, i) {
+          return ensureWhitelisted(t, i, argConfig.ua);
+        })
+      ).then(function (results) {
+        var okCount = 0;
+        var lines = [];
+        var changed = false;
+
+        for (var i = 0; i < results.length; i++) {
+          var st = results[i].st;
+          if (st.applied) okCount++;
+          lines.push(describe(i, results[i]));
+
+          var state = (st.applied ? "1" : "0") + "|" + (st.msg || st.error || "");
+          if (storeRead(results[i].kvState) !== state) {
+            storeWrite(state, results[i].kvState);
+            changed = true;
+          }
+        }
+
+        var allOk = okCount === results.length;
+        if (allOk) {
+          if (currentIp) storeWrite(currentIp, STORE_PREFIX + "last_ip");
+          storeWrite(String(now), STORE_PREFIX + "last_ts");
+          storeWrite("1", STORE_PREFIX + "last_ok");
+        } else {
+          storeWrite("0", STORE_PREFIX + "last_ok");
+        }
+
+        var ipDrift =
+          lastIp &&
+          currentIp &&
+          (isMobileUa ? !sameC24(currentIp, lastIp) : currentIp !== lastIp);
+
+        var title =
+          "GGY 加白 " + okCount + "/" + results.length + (onCellular() ? " 📶 移动网络" : " 🌐 Wi-Fi");
+        var content = lines.join("\n");
+        if (currentIp) {
+          content +=
+            "\n出口 IP: " +
+            currentIp +
+            (isMobileUa ? " (" + getCSubnet(currentIp) + ")" : " (/32)");
+        }
+
+        // 仅在首次、状态变化、网段漂移自愈、出现失败或手动点击时弹出系统通知
+        if (changed || ipDrift || !allOk || isManualTap) {
+          var notifyTitle = ipDrift ? "GGY 加白 · 网段自愈" : "GGY 防火墙加白";
+          notify(notifyTitle, title, content);
+        }
+        finish(title, content, allOk);
+      });
+    })
+    .catch(function (e) {
+      notify("GGY 防火墙加白", "脚本异常", String(e && e.message ? e.message : e));
+      finish("GGY 加白：脚本异常", String(e && e.message ? e.message : e), false);
+    });
+}

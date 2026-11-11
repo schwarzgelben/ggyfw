@@ -1,33 +1,42 @@
 name: GGY 咕咕云防火墙自动加白
-description: 调用咕咕云 (GGY) 防火墙白名单链接将本机当前出口 IP 加入安全组白名单。支持多 token（英文逗号分割），每 10 分钟 cron 与网络变化时自动加白。加白 API 走直连。
+description: 调用咕咕云 (GGY) 防火墙白名单链接将本机当前出口 IP 加入安全组白名单。支持多 token（英文逗号分割），同网段智能节流、每 2 分钟 cron 与网络变化时极速自愈。
 author: reallinzc
 homepage: https://github.com/schwarzgelben/ggyfw
 
-# 安装后在模块参数 tokens 填入咕咕云 token 或分享链接（多台机器用英文逗号分割）。
 compat_arguments:
   tokens: ""
   skip_wifi: ""
+  ua: "mobile"
 
-# 加白 API 必须直连，确保服务端看到的是本机真实出口 IP 而不是代理出口
 rules:
   - domain:
       match: www.guguyun.com
+      policy: DIRECT
+  - domain_suffix:
+      match: 3322.net
+      policy: DIRECT
+  - domain_suffix:
+      match: ip.sb
+      policy: DIRECT
+  - domain:
+      match: 1.1.1.1
       policy: DIRECT
 
 scriptings:
   - schedule:
       name: ggy-fw-cron
-      cron: "*/10 * * * *"
-      script_url: https://raw.githubusercontent.com/schwarzgelben/ggyfw/main/egern/po0-firewall-whitelist.js
+      cron: "*/2 * * * *"
+      script_url: https://raw.githubusercontent.com/schwarzgelben/ggyfw/main/scripts/po0-firewall-whitelist.js
       timeout: 60
       env:
         tokens: "{{{tokens}}}"
         skip_wifi: "{{{skip_wifi}}}"
+        ua: "{{{ua}}}"
   - network:
       name: ggy-fw-network
-      script_url: https://raw.githubusercontent.com/schwarzgelben/ggyfw/main/egern/po0-firewall-whitelist.js
+      script_url: https://raw.githubusercontent.com/schwarzgelben/ggyfw/main/scripts/po0-firewall-whitelist.js
       timeout: 60
       env:
         tokens: "{{{tokens}}}"
         skip_wifi: "{{{skip_wifi}}}"
-
+        ua: "{{{ua}}}"

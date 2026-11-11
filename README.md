@@ -2,20 +2,32 @@
 
 咕咕云 (GGY) 腾讯云/魔方防火墙安全组白名单自动加白 —— 支持 Surge、Loon、Shadowrocket、Stash、Quantumult X、Egern，以及 PC（Linux / macOS / Windows）、安卓 Termux、软路由（OpenWrt / Kwrt）。
 
-## 原理
+## 原理与最佳实践
 
-- 每 10 分钟（+ 网络切换事件）向咕咕云白名单分享端点发起请求：
-  `GET https://www.guguyun.com/cany_tencentecs/firewall/whitelist?token=<token>`
-- 服务端自动识别当前访问来源 IP 并加入安全组白名单。
-- **分流注意**：加白请求必须直连！代理客户端必须添加分流规则 `DOMAIN,www.guguyun.com,DIRECT`，确保 API 识别的是本机当前真实公网 IP，而不是代理节点的出口 IP。
+- **端点**：`GET https://www.guguyun.com/cany_tencentecs/firewall/whitelist?token=<token>`
+- **分流注意**：加白请求与公网 IP 嗅探必须直连！已内置 `DIRECT` 分流规则，确保 API 识别的是本机当前真实公网出口 IP，而非代理节点 IP。
 
-> Token 在咕咕云控制台实例管理页面的防火墙白名单分享链接中获取（即 `?token=` 后面的字符串，或者直接填入完整分享链接）。
+### 💡 移动网络防断流最佳搭配（方案 1）
+
+咕咕云后台的加白机制特性如下：
+- **固定槽位链接 + 手机 UA**：放行请求来源所在整段 `/24` 网段（256 个 IP）。
+- **固定槽位链接 + 电脑 UA**：仅放行 `/32` 单 IP。
+- **自动轮换链接 / 手动添加当前 IP**：无论何种设备均仅放行 `/32` 单 IP。
+
+因此最佳配置推荐：
+1. **手机客户端（Surge 等）**：分配使用**【固定槽位链接】**（默认 UA 为手机），直接放行当前基站整个 `/24` 网段。手机在同区域或同基站漂移时（最后一位跳变）完全不断流！
+2. **家庭软路由 / 电脑**：分配使用**【自动轮换链接】**。家庭宽带公网 IP 极为稳定，几天才变一次，`/32` 足够且不浪费固定槽位。
+3. **极速自愈与智能节流引擎**：
+   - 模块以 2 分钟为周期进行轻量出口探测（直连 3322 / ip.sb / Cloudflare，耗时仅 ~50ms，极省电省流量）。
+   - **同网段静默节流**：若探测到当前出口 IP 与上次加白属于同一个 `/24` 网段，且心跳在有效期内，**自动跳过咕咕云 API 请求**，零频次消耗、不弹干扰通知。
+   - **越界秒级自愈**：一旦手机跨区域切换基站跳出了原 `/24` 网段，脚本立刻主动向咕咕云发起加白并推送通知，无感自愈连接。
+   - **Wi-Fi 防占坑 (`skip_wifi`)**：连入家庭 Wi-Fi 时自动跳过上报，保护槽位配额。
 
 ## 平台总览
 
 | 平台 | 方案 | 触发方式 |
 |---|---|---|
-| iOS/Mac 代理客户端 | 本仓库脚本模块：Surge / Loon / Stash / QX / Shadowrocket / Egern | network-changed 即时 + 10 分钟 cron + 面板刷新 |
+| iOS/Mac 代理客户端 | 本仓库脚本模块：Surge / Loon / Stash / QX / Shadowrocket / Egern | network-changed 即时 + 2分钟探活自愈 + 面板手动刷新 |
 | Linux / macOS | 本仓库 shell 脚本 | systemd timer / cron 每 10 分钟 |
 | OpenWrt / Kwrt 软路由 | 本仓库 shell 脚本 | cron + hotplug WAN 重连秒级触发 |
 | Windows | 本仓库 PowerShell | 计划任务：10 分钟 + 网络事件 |
@@ -25,7 +37,7 @@
 
 | 客户端 | 载体 | 配置说明 |
 |---|---|---|
-| **Surge** | `surge/po0-firewall-whitelist.sgmodule` | 模块参数 `tokens` 填入 token 或完整链接（已内置直连分流） |
+| **Surge** | `surge/po0-firewall-whitelist.sgmodule` | 模块参数 `tokens` 填入固定槽位 token 或完整链接（已内置直连分流与极速自愈） |
 | **Loon** | `loon/po0-firewall-whitelist.plugin` | 插件参数 `tokens` 填入 token 或完整链接 |
 | **Stash** | `stash/po0-firewall-whitelist.stoverride` | 覆写内填入 token 或完整链接 |
 | **Shadowrocket** | `shadowrocket/po0-firewall-whitelist.srmodule` | 模块文本中替换 `tokens=` |
@@ -38,8 +50,11 @@
    ```text
    https://raw.githubusercontent.com/schwarzgelben/ggyfw/main/surge/po0-firewall-whitelist.sgmodule
    ```
-2. 在模块参数设置中，将 `tokens` 填入你的咕咕云 token 或完整分享链接（多台机器用英文逗号分割）。
-3. 模块已内置 `DOMAIN,www.guguyun.com,DIRECT` 规则，开代理也能正确加白本机出口。
+2. 在模块参数设置中：
+   - `tokens`: 填入你的咕咕云**固定槽位 token** 或完整分享链接（多台机器用英文逗号分割）。
+   - `skip_wifi`: （可选）填入你的家庭 Wi-Fi 名称（SSID，如 `MyHome-5G`），连入时跳过上报。
+   - `ua`: （可选，默认 `mobile`）。
+3. 模块已内置 `DOMAIN,www.guguyun.com,DIRECT` 以及 IP 探活直连规则，开代理也能正确识别并加白本机出口。
 
 ---
 

@@ -1,17 +1,19 @@
 #!/bin/sh
-# po0fw - GGY (咕咕云) 防火墙自动加白（PC / 软路由 / Termux 通用版）
+# po0fw - GGY (咕咕云) 防火墙自动加白与流量查询（PC / 软路由 / Termux 通用版）
 # https://github.com/schwarzgelben/ggyfw
 #
 # 用法:
 #   PO0FW_TOKENS="你的token或完整链接" ./po0fw.sh          # 环境变量方式
 #   ./po0fw.sh token1,token2                             # 参数方式（多 token 逗号分割）
 #   ./po0fw.sh status                                    # 检查/加白状态
+#   ./po0fw.sh traffic                                   # 单独查询流量
 #
 # 配置文件（可选，优先级低于环境变量/参数）: /etc/po0fw.conf 内容示例:
 #   PO0FW_TOKENS="你的token"
 #
-# API 说明: 使用咕咕云智简魔方插件白名单分享链接。
-#   GET https://www.guguyun.com/cany_tencentecs/firewall/whitelist?token=<token>
+# API 说明: 使用咕咕云智简魔方插件白名单分享链接与流量查询接口。
+#   加白: GET https://www.guguyun.com/cany_tencentecs/firewall/whitelist?token=<token>
+#   流量: GET https://www.guguyun.com/cany_tencentecs/traffic/query?token=<token>
 #
 # 注意事项:
 #   如果本机运行了代理/软路由，请确保 www.guguyun.com 配置为直连 (DIRECT)，
@@ -20,6 +22,7 @@
 set -u
 
 API_BASE="${PO0FW_API:-https://www.guguyun.com/cany_tencentecs/firewall/whitelist}"
+TRAFFIC_API_BASE="${PO0FW_TRAFFIC_API:-https://www.guguyun.com/cany_tencentecs/traffic/query}"
 CONF="${PO0FW_CONF:-/etc/po0fw.conf}"
 
 # 默认使用手机 UA：在固定槽位下使软路由/Linux 获得 /24 大网段放行福利（防宽带重拨断流）
@@ -37,6 +40,10 @@ ARG_TOKENS=""
 case "${1:-}" in
   status)
     MODE="status"
+    ARG_TOKENS="${2:-}"
+    ;;
+  traffic)
+    MODE="traffic"
     ARG_TOKENS="${2:-}"
     ;;
   "") ;;
@@ -84,18 +91,35 @@ for entry in $TOKENS; do
   [ -z "$tok" ] && continue
   short=$(echo "$tok" | cut -c1-12)
 
-  url="${API_BASE}?token=${tok}"
-  res=$(curl $CURL_OPTS -X GET "$url" 2>&1)
+  if [ "$MODE" != "traffic" ]; then
+    url="${API_BASE}?token=${tok}"
+    res=$(curl $CURL_OPTS -X GET "$url" 2>&1)
 
-  status=$(echo "$res" | sed -n 's/.*"status":\([0-9]*\).*/\1/p')
-  msg=$(echo "$res" | sed -n 's/.*"msg":"\([^"]*\)".*/\1/p')
+    status=$(echo "$res" | sed -n 's/.*"status":\([0-9]*\).*/\1/p')
+    msg=$(echo "$res" | sed -n 's/.*"msg":"\([^"]*\)".*/\1/p')
 
-  if [ "$status" = "200" ]; then
-    log "#$IDX [${short}…] ✅ 加白成功: ${msg:-OK}"
-  else
-    log "#$IDX [${short}…] ❌ 加白失败 (status=${status:-error}): ${msg:-$res}"
-    FAIL=1
+    if [ "$status" = "200" ]; then
+      log "#$IDX [${short}…] ✅ 加白成功: ${msg:-OK}"
+    else
+      log "#$IDX [${short}…] ❌ 加白失败 (status=${status:-error}): ${msg:-$res}"
+      FAIL=1
+    fi
   fi
+
+  # 查询流量信息（若可用则展示）
+  turl="${TRAFFIC_API_BASE}?token=${tok}"
+  tres=$(curl $CURL_OPTS -X GET "$turl" 2>/dev/null || true)
+  tstatus=$(echo "$tres" | sed -n 's/.*"status":\([0-9]*\).*/\1/p')
+  if [ "$tstatus" = "200" ]; then
+    tused=$(echo "$tres" | sed -n 's/.*"used":"\([^"]*\)".*/\1/p')
+    ttotal=$(echo "$tres" | sed -n 's/.*"total":"\([^"]*\)".*/\1/p')
+    trest=$(echo "$tres" | sed -n 's/.*"rest":"\([^"]*\)".*/\1/p')
+    treset=$(echo "$tres" | sed -n 's/.*"reset_time":"\([^"]*\)".*/\1/p')
+    if [ -n "$tused" ] && [ -n "$ttotal" ]; then
+      log "#$IDX [${short}…] 📊 流量: ${tused} / ${ttotal}${treset:+ · 重置: $treset}"
+    fi
+  fi
+
   IFS=','
 done
 IFS=$OLDIFS

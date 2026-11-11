@@ -1,11 +1,13 @@
-#requires -Version 5.1
-# po0fw - GGY (咕咕云) 防火墙自动加白 (Windows)
+﻿#requires -Version 5.1
+# po0fw - GGY (咕咕云) 防火墙自动加白与流量查询 (Windows)
 # 用法: powershell -File po0fw.ps1 -Tokens "token1,token2"
 param(
     [string]$Tokens = $env:PO0FW_TOKENS,
     [string]$ApiBase = "https://www.guguyun.com/cany_tencentecs/firewall/whitelist",
+    [string]$TrafficApiBase = "https://www.guguyun.com/cany_tencentecs/traffic/query",
     [string]$UaMode = "mobile",
-    [switch]$Status
+    [switch]$Status,
+    [switch]$Traffic
 )
 
 $confPath = Join-Path $env:ProgramData "po0fw\po0fw.conf"
@@ -48,22 +50,38 @@ foreach ($entry in $Tokens.Split(',')) {
     if (-not $tok) { continue }
     $short = $tok.Substring(0, [Math]::Min(12, $tok.Length))
     
-    $url = "$ApiBase`?token=$tok"
-    try {
-        $res = Invoke-RestMethod -Method Get -Uri $url -TimeoutSec 20 -Headers @{ "Accept" = "application/json"; "User-Agent" = $userAgent }
-    } catch {
-        Write-Host "[po0fw] #$idx [$short…] ❌ 请求异常: $_"
-        $fail = $true
-        continue
+    if (-not $Traffic) {
+        $url = "$ApiBase`?token=$tok"
+        try {
+            $res = Invoke-RestMethod -Method Get -Uri $url -TimeoutSec 20 -Headers @{ "Accept" = "application/json"; "User-Agent" = $userAgent }
+            $resStatus = $res.status
+            $msg = $res.msg
+            if ($resStatus -eq 200) {
+                Write-Host "[po0fw] #$idx [$short…] ✅ 加白成功: $msg"
+            } else {
+                Write-Host "[po0fw] #$idx [$short…] ❌ 加白失败 (status=$resStatus): $msg"
+                $fail = $true
+            }
+        } catch {
+            Write-Host "[po0fw] #$idx [$short…] ❌ 请求异常: $_"
+            $fail = $true
+        }
     }
 
-    $resStatus = $res.status
-    $msg = $res.msg
-    if ($resStatus -eq 200) {
-        Write-Host "[po0fw] #$idx [$short…] ✅ 加白成功: $msg"
-    } else {
-        Write-Host "[po0fw] #$idx [$short…] ❌ 加白失败 (status=$resStatus): $msg"
-        $fail = $true
-    }
+    # 查询流量信息
+    $tUrl = "$TrafficApiBase`?token=$tok"
+    try {
+        $tRes = Invoke-RestMethod -Method Get -Uri $tUrl -TimeoutSec 10 -Headers @{ "Accept" = "application/json"; "User-Agent" = $userAgent }
+        if ($tRes.status -eq 200 -and $tRes.data) {
+            $d = $tRes.data
+            $u = if ($d.used) { $d.used } else { $d.traffic_used }
+            $tot = if ($d.total) { $d.total } else { $d.traffic_total }
+            $rst = if ($d.reset_time) { $d.reset_time } else { $d.reset_date }
+            if ($u -and $tot) {
+                $rstInfo = if ($rst) { " · 重置: $rst" } else { "" }
+                Write-Host "[po0fw] #$idx [$short…] 📊 流量: $u / $tot$rstInfo"
+            }
+        }
+    } catch {}
 }
 if ($fail) { exit 1 }

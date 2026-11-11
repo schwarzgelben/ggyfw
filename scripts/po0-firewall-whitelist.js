@@ -1,38 +1,36 @@
 /*
- * GGY (咕咕云) 防火墙白名单自动加白
+ * GGY (咕咕云) 防火墙白名单自动加白与流量查询
  * 兼容：Surge / Stash / Shadowrocket / Loon / Quantumult X
  *
- * 端点：GET https://www.guguyun.com/cany_tencentecs/firewall/whitelist?token=<token>
- * 行为：调用咕咕云魔方插件白名单分享链接，将当前请求来源 IP 自动加入防火墙安全组白名单。
- * 响应：{"status":200,"msg":"...","data":[]} / {"status":400,"msg":"白名单分享链接无效或已失效","data":[]}
+ * 加白端点：GET https://www.guguyun.com/cany_tencentecs/firewall/whitelist?token=<token>
+ * 流量端点：GET https://www.guguyun.com/cany_tencentecs/traffic/query?token=<token>
+ * 行为：
+ * 1. 自动加白：调用白名单链接将当前出口 IP/网段加入防火墙安全组。
+ * 2. 流量查询：自动查询实例已用/剩余/总量及重置日，并在面板优雅展示。
  *
  * 智能探活与自愈机制（方案 1）：
  * 1. 识别手机 UA（ua=mobile，默认）：固定槽位链接放行整段 /24（256个IP）。
  * 2. 轻量公网 IP 嗅探：直连探测本机出口公网 IP（直连 3322.net / ip.sb / ipip.net / 1.1.1.1）。
  * 3. 同 C 段智能节流：若当前出口 IP 与上次加白 IP 处于同一 /24 网段且在保活期内，
- *    判定为安全组已放行，自动跳过咕咕云 API 请求（零频次消耗、零断流）。
+ *    判定为安全组已放行，自动跳过咕咕云加白 API 请求（零频次消耗、零断流）。
  * 4. 越界秒级自愈：每 2 分钟高频 cron 探活，一旦检测到基站 IP 跳出 /24 网段，
  *    立即发起咕咕云加白请求，将新网段加入防火墙，实现无感自愈。
- * 5. 手动刷新：点击面板按钮立即强制重新加白并刷新状态。
+ * 5. 手动刷新：点击面板按钮立即强制重新加白并刷新流量与状态。
  *
  * 分流注意：
- * 加白请求与 IP 嗅探必须直连！必须配置分流规则：
+ * 加白请求、流量查询与 IP 嗅探必须直连！必须配置分流规则：
  * DOMAIN,www.guguyun.com,DIRECT
  * DOMAIN-SUFFIX,3322.net,DIRECT
  * DOMAIN-SUFFIX,ip.sb,DIRECT
  * DOMAIN-SUFFIX,ipip.net,DIRECT
  * IP-CIDR,1.1.1.1/32,DIRECT,no-resolve
  * DOMAIN,1.1.1.1,DIRECT
- *
- * token 来源（优先级从高到低）：
- * 1. argument: tokens=<token 或完整 URL>（Surge/Loon/Stash 模块参数，支持多 token 逗号或换行分割）
- * 2. 持久化存储 key "po0fw_tokens" 或 "ggy_tokens"（Quantumult X 等客户端可通过 BoxJs 写入）
- * 3. 下面的 INLINE_TOKENS 常量
  */
 
 var INLINE_TOKENS = "";
 
 var API_BASE = "https://www.guguyun.com/cany_tencentecs/firewall/whitelist?token=";
+var TRAFFIC_API_BASE = "https://www.guguyun.com/cany_tencentecs/traffic/query?token=";
 var STORE_PREFIX = "ggy_fw_";
 var TOKENS_KEY = "ggy_tokens";
 var TOKENS_KEY_LEGACY = "po0fw_tokens";
@@ -361,6 +359,169 @@ function detectPublicIp() {
   return probeAt(0);
 }
 
+/* ---------- 流量查询与格式化 ---------- */
+
+function formatTrafficBytes(val, unit) {
+  if (val === null || val === undefined || val === "") return "";
+  if (typeof val === "string") {
+    val = val.trim();
+    if (/[a-zA-Z]/.test(val)) return val;
+    var num = parseFloat(val);
+    if (isNaN(num)) return val;
+    val = num;
+  }
+  if (typeof val === "number") {
+    if (unit) {
+      var u = unit.toUpperCase();
+      if (u === "GB" || u === "G") return val.toFixed(1) + " GB";
+      if (u === "MB" || u === "M") return (val >= 1024 ? (val / 1024).toFixed(1) + " GB" : val.toFixed(1) + " MB");
+      if (u === "TB" || u === "T") return val.toFixed(2) + " TB";
+    }
+    if (val >= 1099511627776) return (val / 1099511627776).toFixed(2) + " TB";
+    if (val >= 1073741824) return (val / 1073741824).toFixed(2) + " GB";
+    if (val >= 1048576) return (val / 1048576).toFixed(2) + " MB";
+    if (val > 0 && val < 100000) return val.toFixed(1) + " GB";
+    return String(val);
+  }
+  return String(val);
+}
+
+function parseTrafficData(data) {
+  if (!data) return null;
+  if (Array.isArray(data)) {
+    if (data.length === 0) return null;
+    data = data[0];
+  }
+  if (typeof data !== "object") return { line: String(data) };
+  if (data.traffic && typeof data.traffic === "object") data = data.traffic;
+
+  var unit = data.unit || data.traffic_unit || "";
+
+  var rawUsed = data.used !== undefined ? data.used :
+               (data.traffic_used !== undefined ? data.traffic_used :
+               (data.used_traffic !== undefined ? data.used_traffic :
+               (data.use !== undefined ? data.use :
+               (data.traffic_out !== undefined ? data.traffic_out :
+               (data.out !== undefined ? data.out : null)))));
+
+  var rawTotal = data.total !== undefined ? data.total :
+                (data.traffic_total !== undefined ? data.traffic_total :
+                (data.total_traffic !== undefined ? data.total_traffic :
+                (data.limit !== undefined ? data.limit :
+                (data.max !== undefined ? data.max :
+                (data.bandwidth !== undefined ? data.bandwidth : null)))));
+
+  var rawRest = data.rest !== undefined ? data.rest :
+               (data.traffic_rest !== undefined ? data.traffic_rest :
+               (data.remaining !== undefined ? data.remaining :
+               (data.traffic_remaining !== undefined ? data.traffic_remaining :
+               (data.left !== undefined ? data.left : null))));
+
+  var rawReset = data.reset_date !== undefined ? data.reset_date :
+                (data.reset_time !== undefined ? data.reset_time :
+                (data.traffic_reset !== undefined ? data.traffic_reset :
+                (data.next_reset !== undefined ? data.next_reset :
+                (data.reset_day !== undefined ? "每月 " + data.reset_day + " 日" :
+                (data.reset !== undefined ? data.reset : null)))));
+
+  var usedStr = formatTrafficBytes(rawUsed, unit);
+  var totalStr = formatTrafficBytes(rawTotal, unit);
+  var restStr = formatTrafficBytes(rawRest, unit);
+
+  var percentStr = "";
+  if (data.percent !== undefined) {
+    percentStr = String(data.percent);
+    if (percentStr.indexOf("%") === -1) percentStr += "%";
+  } else if (rawUsed !== null && rawTotal !== null) {
+    var uNum = parseFloat(String(rawUsed));
+    var tNum = parseFloat(String(rawTotal));
+    if (!isNaN(uNum) && !isNaN(tNum) && tNum > 0) {
+      percentStr = ((uNum / tNum) * 100).toFixed(1) + "%";
+    }
+  }
+
+  var line = "";
+  if (usedStr && totalStr) {
+    line = "流量: " + usedStr + " / " + totalStr + (percentStr ? " (" + percentStr + ")" : "");
+  } else if (restStr && totalStr) {
+    line = "流量: 余 " + restStr + " / 共 " + totalStr;
+  } else if (usedStr) {
+    line = "已用: " + usedStr;
+  } else if (restStr) {
+    line = "剩余: " + restStr;
+  }
+
+  if (rawReset) {
+    var resetStr = String(rawReset).replace(/^\d{4}-/, "").replace(/\s.*$/, "");
+    if (resetStr) {
+      if (line) line += " · " + resetStr + " 重置";
+      else line = "重置: " + resetStr;
+    }
+  }
+
+  return { line: line, used: usedStr, total: totalStr, rest: restStr, reset: rawReset };
+}
+
+function queryTraffic(token, index, multi) {
+  var kvKey = STORE_PREFIX + "traffic_" + index;
+  var kvTsKey = STORE_PREFIX + "traffic_ts_" + index;
+
+  var cached = storeRead(kvKey) || "";
+  var cachedTs = parseInt(storeRead(kvTsKey) || "0", 10);
+  var now = Date.now();
+  var CACHE_TTL = 5 * 60 * 1000; // 缓存 5 分钟
+
+  // 命中非强制刷新缓存
+  if (!isManualTap && cached && now - cachedTs < CACHE_TTL) {
+    return Promise.resolve(cached);
+  }
+
+  var url = TRAFFIC_API_BASE + encodeURIComponent(token);
+  var opts = {
+    url: url,
+    headers: {
+      "User-Agent":
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+      Accept: "application/json, text/plain, */*",
+    },
+  };
+  if (REQUEST_TIMEOUT !== null) opts.timeout = REQUEST_TIMEOUT;
+
+  return httpRequest("GET", opts)
+    .then(function (r) {
+      if (r.error) return cached;
+      var data = null;
+      try {
+        var j = JSON.parse(r.body);
+        if (j && (j.status === 200 || j.code === 200) && j.data) {
+          data = j.data;
+        }
+      } catch (e) {}
+
+      if (!data) return cached;
+      var parsed = parseTrafficData(data);
+      if (parsed && parsed.line) {
+        var prefix = multi ? "📊 #" + (index + 1) + " " : "📊 ";
+        var line = prefix + parsed.line;
+        storeWrite(line, kvKey);
+        storeWrite(String(now), kvTsKey);
+        return line;
+      }
+      return cached;
+    })
+    .catch(function () {
+      return cached;
+    });
+}
+
+function fetchAllTraffic(tokens) {
+  return Promise.all(
+    tokens.map(function (t, i) {
+      return queryTraffic(t, i, tokens.length > 1);
+    })
+  );
+}
+
 /* ---------- 业务加白逻辑 ---------- */
 
 function apiCall(token, uaMode) {
@@ -521,22 +682,33 @@ function runMain() {
       }
 
       if (canSkip) {
-        var minsAgo = Math.max(0, Math.floor((now - lastTs) / 60000));
-        var title = "GGY 加白 · 放行中" + (onCellular() ? " 📶 移动网络" : " 🌐 Wi-Fi");
-        var content =
-          "出口 IP: " + currentIp + "\n" +
-          "放行网段: " + skipSubnet + " (无需重报)\n" +
-          "心跳保活: 持续有效 (" + (minsAgo === 0 ? "刚刚" : minsAgo + " 分钟前") + ")";
-        finish(title, content, true);
-        return;
+        return fetchAllTraffic(tokens).then(function (trafficLines) {
+          var minsAgo = Math.max(0, Math.floor((now - lastTs) / 60000));
+          var title = "GGY 加白 · 放行中" + (onCellular() ? " 📶 移动网络" : " 🌐 Wi-Fi");
+          var content = "出口 IP: " + currentIp + "\n放行网段: " + skipSubnet + " (无需重报)";
+
+          var validTraffic = trafficLines.filter(function (s) { return !!s; });
+          if (validTraffic.length > 0) {
+            content += "\n" + validTraffic.join("\n");
+          }
+
+          content += "\n心跳保活: 持续有效 (" + (minsAgo === 0 ? "刚刚" : minsAgo + " 分钟前") + ")";
+          finish(title, content, true);
+        });
       }
 
-      // 越界自愈或保活上报：调用咕咕云加白 API
-      return Promise.all(
-        tokens.map(function (t, i) {
-          return ensureWhitelisted(t, i, argConfig.ua);
-        })
-      ).then(function (results) {
+      // 越界自愈或保活上报：并行调用咕咕云加白 API 与流量查询
+      return Promise.all([
+        Promise.all(
+          tokens.map(function (t, i) {
+            return ensureWhitelisted(t, i, argConfig.ua);
+          })
+        ),
+        fetchAllTraffic(tokens),
+      ]).then(function (res) {
+        var results = res[0];
+        var trafficLines = res[1];
+
         var okCount = 0;
         var lines = [];
         var changed = false;
@@ -570,6 +742,12 @@ function runMain() {
         var title =
           "GGY 加白 " + okCount + "/" + results.length + (onCellular() ? " 📶 移动网络" : " 🌐 Wi-Fi");
         var content = lines.join("\n");
+
+        var validTraffic = trafficLines.filter(function (s) { return !!s; });
+        if (validTraffic.length > 0) {
+          content += "\n" + validTraffic.join("\n");
+        }
+
         if (currentIp) {
           content +=
             "\n出口 IP: " +

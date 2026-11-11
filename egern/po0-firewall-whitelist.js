@@ -1,17 +1,18 @@
 /*
- * GGY (咕咕云) 防火墙自动加白 · Egern 原生脚本
+ * GGY (咕咕云) 防火墙自动加白与流量查询 · Egern 原生脚本
  *
- * 行为：GET https://www.guguyun.com/cany_tencentecs/firewall/whitelist?token=<token>
- * 调用咕咕云魔方插件白名单链接，将当前出口 IP 加入安全组白名单。
+ * 加白：GET https://www.guguyun.com/cany_tencentecs/firewall/whitelist?token=<token>
+ * 流量：GET https://www.guguyun.com/cany_tencentecs/traffic/query?token=<token>
  *
  * 智能探活与自愈机制（方案 1）：
  * 1. 模拟手机 UA：固定槽位链接放行整段 /24。
  * 2. 直连嗅探公网出口 IP。
- * 3. 同 C 段 (/24) 智能节流跳过重复调用。
- * 4. 越界自愈与保活上报。
+ * 3. 同 C 段 (/24) 智能节流跳过重复加白调用。
+ * 4. 越界自愈与流量同步查询。
  */
 
 const API_BASE = "https://www.guguyun.com/cany_tencentecs/firewall/whitelist?token=";
+const TRAFFIC_API_BASE = "https://www.guguyun.com/cany_tencentecs/traffic/query?token=";
 const STORE_PREFIX = "ggy_fw_";
 
 function extractToken(raw) {
@@ -101,7 +102,7 @@ function extractIPv4(text) {
   }
   const m = s.match(/\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b/);
   if (m && m[0]) {
-    if (m[0] !== "1.1.1.1" && m[0] !== "1.0.0.1" && m[0] !== "8.8.8.8" && m[0] !== "127.0.0.1") {
+    if (m[0] !== "1.1.1.1" && m[0] !== "1.0.0.1" && m[0] !== "8.8.8.8" && m[0] !== "127.0.0.1" && m[0] !== "0.0.0.0") {
       return m[0];
     }
   }
@@ -142,6 +143,148 @@ async function detectPublicIp(ctx) {
     } catch (e) {}
   }
   return "";
+}
+
+function formatTrafficBytes(val, unit) {
+  if (val === null || val === undefined || val === "") return "";
+  if (typeof val === "string") {
+    val = val.trim();
+    if (/[a-zA-Z]/.test(val)) return val;
+    const num = parseFloat(val);
+    if (isNaN(num)) return val;
+    val = num;
+  }
+  if (typeof val === "number") {
+    if (unit) {
+      const u = unit.toUpperCase();
+      if (u === "GB" || u === "G") return val.toFixed(1) + " GB";
+      if (u === "MB" || u === "M") return (val >= 1024 ? (val / 1024).toFixed(1) + " GB" : val.toFixed(1) + " MB");
+      if (u === "TB" || u === "T") return val.toFixed(2) + " TB";
+    }
+    if (val >= 1099511627776) return (val / 1099511627776).toFixed(2) + " TB";
+    if (val >= 1073741824) return (val / 1073741824).toFixed(2) + " GB";
+    if (val >= 1048576) return (val / 1048576).toFixed(2) + " MB";
+    if (val > 0 && val < 100000) return val.toFixed(1) + " GB";
+    return String(val);
+  }
+  return String(val);
+}
+
+function parseTrafficData(data) {
+  if (!data) return null;
+  if (Array.isArray(data)) {
+    if (data.length === 0) return null;
+    data = data[0];
+  }
+  if (typeof data !== "object") return { line: String(data) };
+  if (data.traffic && typeof data.traffic === "object") data = data.traffic;
+
+  const unit = data.unit || data.traffic_unit || "";
+
+  const rawUsed = data.used !== undefined ? data.used :
+                 (data.traffic_used !== undefined ? data.traffic_used :
+                 (data.used_traffic !== undefined ? data.used_traffic :
+                 (data.use !== undefined ? data.use :
+                 (data.traffic_out !== undefined ? data.traffic_out :
+                 (data.out !== undefined ? data.out : null)))));
+
+  const rawTotal = data.total !== undefined ? data.total :
+                  (data.traffic_total !== undefined ? data.traffic_total :
+                  (data.total_traffic !== undefined ? data.total_traffic :
+                  (data.limit !== undefined ? data.limit :
+                  (data.max !== undefined ? data.max :
+                  (data.bandwidth !== undefined ? data.bandwidth : null)))));
+
+  const rawRest = data.rest !== undefined ? data.rest :
+                 (data.traffic_rest !== undefined ? data.traffic_rest :
+                 (data.remaining !== undefined ? data.remaining :
+                 (data.traffic_remaining !== undefined ? data.traffic_remaining :
+                 (data.left !== undefined ? data.left : null))));
+
+  const rawReset = data.reset_date !== undefined ? data.reset_date :
+                  (data.reset_time !== undefined ? data.reset_time :
+                  (data.traffic_reset !== undefined ? data.traffic_reset :
+                  (data.next_reset !== undefined ? data.next_reset :
+                  (data.reset_day !== undefined ? "每月 " + data.reset_day + " 日" :
+                  (data.reset !== undefined ? data.reset : null)))));
+
+  const usedStr = formatTrafficBytes(rawUsed, unit);
+  const totalStr = formatTrafficBytes(rawTotal, unit);
+  const restStr = formatTrafficBytes(rawRest, unit);
+
+  let percentStr = "";
+  if (data.percent !== undefined) {
+    percentStr = String(data.percent);
+    if (!percentStr.includes("%")) percentStr += "%";
+  } else if (rawUsed !== null && rawTotal !== null) {
+    const uNum = parseFloat(String(rawUsed));
+    const tNum = parseFloat(String(rawTotal));
+    if (!isNaN(uNum) && !isNaN(tNum) && tNum > 0) {
+      percentStr = ((uNum / tNum) * 100).toFixed(1) + "%";
+    }
+  }
+
+  let line = "";
+  if (usedStr && totalStr) {
+    line = "流量: " + usedStr + " / " + totalStr + (percentStr ? " (" + percentStr + ")" : "");
+  } else if (restStr && totalStr) {
+    line = "流量: 余 " + restStr + " / 共 " + totalStr;
+  } else if (usedStr) {
+    line = "已用: " + usedStr;
+  } else if (restStr) {
+    line = "剩余: " + restStr;
+  }
+
+  if (rawReset) {
+    const resetStr = String(rawReset).replace(/^\d{4}-/, "").replace(/\s.*$/, "");
+    if (resetStr) {
+      if (line) line += " · " + resetStr + " 重置";
+      else line = "重置: " + resetStr;
+    }
+  }
+
+  return { line: line, used: usedStr, total: totalStr, rest: restStr, reset: rawReset };
+}
+
+async function queryTraffic(ctx, token, index, multi) {
+  const kvKey = STORE_PREFIX + "traffic_" + index;
+  const kvTsKey = STORE_PREFIX + "traffic_ts_" + index;
+
+  const cached = ctx.storage.get(kvKey) || "";
+  const cachedTs = parseInt(ctx.storage.get(kvTsKey) || "0", 10);
+  const now = Date.now();
+  const CACHE_TTL = 5 * 60 * 1000;
+
+  if (cached && now - cachedTs < CACHE_TTL) {
+    return cached;
+  }
+
+  const url = TRAFFIC_API_BASE + encodeURIComponent(token);
+  const r = await httpGetOnce(ctx, url, {
+    "User-Agent":
+      "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+    Accept: "application/json, text/plain, */*",
+  });
+
+  if (r.netError) return cached;
+  let data = null;
+  try {
+    const j = JSON.parse(r.text);
+    if (j && (j.status === 200 || j.code === 200) && j.data) {
+      data = j.data;
+    }
+  } catch (e) {}
+
+  if (!data) return cached;
+  const parsed = parseTrafficData(data);
+  if (parsed && parsed.line) {
+    const prefix = multi ? "📊 #" + (index + 1) + " " : "📊 ";
+    const line = prefix + parsed.line;
+    ctx.storage.set(kvKey, line);
+    ctx.storage.set(kvTsKey, String(now));
+    return line;
+  }
+  return cached;
 }
 
 async function apiCall(ctx, token, uaMode) {
@@ -221,9 +364,12 @@ export default async function (ctx) {
 
   const cellular = onCellular(ctx);
   const results = [];
+  const trafficLines = [];
   for (let i = 0; i < tokens.length; i++) {
     const st = await apiCall(ctx, tokens[i], uaMode);
     results.push({ token: tokens[i], st: st, kvState: STORE_PREFIX + i });
+    const traf = await queryTraffic(ctx, tokens[i], i, tokens.length > 1);
+    if (traf) trafficLines.push(traf);
   }
 
   let okCount = 0;
@@ -257,6 +403,9 @@ export default async function (ctx) {
     "GGY 加白 " + okCount + "/" + results.length + (cellular ? " 📶 移动网络" : " 🌐 Wi-Fi");
 
   let content = lines.join("\n");
+  if (trafficLines.length > 0) {
+    content += "\n" + trafficLines.join("\n");
+  }
   if (currentIp) {
     content += "\n出口 IP: " + currentIp + (isMobileUa ? " (" + getCSubnet(currentIp) + ")" : " (/32)");
   }

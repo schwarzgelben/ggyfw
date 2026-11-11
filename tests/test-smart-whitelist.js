@@ -28,8 +28,18 @@ function makeSandbox(arg, trigger, network) {
     $httpClient: {
       get: (opts, cb) => {
         httpCalls.push(opts.url);
-        if (opts.url.includes("1.1.1.1")) {
-          // Tricky Cloudflare trace output where h=1.1.1.1 appears before ip=
+        if (opts.url.includes("traffic/query")) {
+          cb(null, { status: 200 }, JSON.stringify({
+            status: 200,
+            msg: "查询成功",
+            data: {
+              used: "15.3G",
+              total: "1000G",
+              rest: "984.7G",
+              reset_time: "2026-12-01"
+            }
+          }));
+        } else if (opts.url.includes("1.1.1.1")) {
           cb(null, { status: 200 }, "fl=123f45\nh=1.1.1.1\nip=117.136.32.15\nts=1710123456\n");
         } else if (opts.url.includes("3322.net")) {
           cb(null, { status: 200 }, "117.136.32.15\n");
@@ -66,14 +76,16 @@ async function runTest(name, sandboxFn, verifyFn) {
 }
 
 async function main() {
-  console.log("Starting Comprehensive Logic Checks...\n");
+  console.log("Starting Comprehensive Logic Checks with Traffic Query...\n");
 
-  // Test 1: Surge query string + First Run
-  await runTest("Surge Argument + First Run", 
+  // Test 1: Surge query string + First Run with Traffic Query
+  await runTest("Surge Argument + First Run (with Traffic Query)", 
     () => makeSandbox("tokens=tok1&skip_wifi=HomeWiFi&ua=mobile"),
     (sb) => {
       if (!doneResult || !doneResult.title.includes("GGY 加白 1/1")) throw new Error("Title mismatch: " + JSON.stringify(doneResult));
-      if (!httpCalls.some(u => u.includes("guguyun.com"))) throw new Error("GGY API was not called");
+      if (!httpCalls.some(u => u.includes("firewall/whitelist"))) throw new Error("Whitelist API was not called");
+      if (!httpCalls.some(u => u.includes("traffic/query"))) throw new Error("Traffic query API was not called");
+      if (!doneResult.content.includes("📊 流量: 15.3G / 1000G")) throw new Error("Traffic line missing in panel: " + doneResult.content);
       if (store["ggy_fw_last_ip"] !== "117.136.32.15") throw new Error("Store last_ip mismatch: " + store["ggy_fw_last_ip"]);
       if (store["ggy_fw_last_ok"] !== "1") throw new Error("Store last_ok mismatch");
     }
@@ -107,7 +119,7 @@ async function main() {
         } else if (opts.url.includes("guguyun.com")) {
           cb(null, { status: 200 }, JSON.stringify({ status: 200, msg: "添加成功", data: [] }));
         } else {
-          cb("fail", null, null); // 3322 and others fail, fallback to 1.1.1.1
+          cb("fail", null, null);
         }
       };
       return sb;
@@ -119,14 +131,15 @@ async function main() {
     }
   );
 
-  // Test 5: Same C24 subnet throttling (IP 117.136.32.88 vs 117.136.32.15)
-  await runTest("Same C24 Subnet Throttling",
+  // Test 5: Same C24 subnet throttling + Traffic cached display
+  await runTest("Same C24 Subnet Throttling (Shows Cached/Fresh Traffic)",
     () => {
       const sb = makeSandbox("tokens=tok1");
-      // Preload store as if last run was 2 mins ago
       store["ggy_fw_last_ip"] = "117.136.32.15";
       store["ggy_fw_last_ts"] = String(Date.now() - 2 * 60 * 1000);
       store["ggy_fw_last_ok"] = "1";
+      store["ggy_fw_traffic_0"] = "📊 流量: 15.3G / 1000G (1.5%) · 12-01 重置";
+      store["ggy_fw_traffic_ts_0"] = String(Date.now() - 60 * 1000); // 1 min ago
       sb.$httpClient.get = (opts, cb) => {
         httpCalls.push(opts.url);
         if (opts.url.includes("3322.net")) {
@@ -138,8 +151,9 @@ async function main() {
       return sb;
     },
     (sb) => {
-      if (httpCalls.some(u => u.includes("guguyun.com"))) throw new Error("GGY API should NOT be called on same C24");
+      if (httpCalls.some(u => u.includes("firewall/whitelist"))) throw new Error("GGY whitelist API should NOT be called on same C24");
       if (!doneResult.title.includes("放行中")) throw new Error("Title should indicate active pass: " + doneResult.title);
+      if (!doneResult.content.includes("📊 流量: 15.3G / 1000G")) throw new Error("Traffic info should be present on panel: " + doneResult.content);
       if (notifications.length > 0) throw new Error("Should not send push notification on throttled run");
     }
   );
@@ -154,7 +168,7 @@ async function main() {
       sb.$httpClient.get = (opts, cb) => {
         httpCalls.push(opts.url);
         if (opts.url.includes("3322.net")) {
-          cb(null, { status: 200 }, "117.136.99.12\n"); // new /24!
+          cb(null, { status: 200 }, "117.136.99.12\n");
         } else if (opts.url.includes("guguyun.com")) {
           cb(null, { status: 200 }, JSON.stringify({ status: 200, msg: "添加成功", data: [] }));
         }
@@ -162,7 +176,7 @@ async function main() {
       return sb;
     },
     (sb) => {
-      if (!httpCalls.some(u => u.includes("guguyun.com"))) throw new Error("GGY API MUST be called on cross C24 drift");
+      if (!httpCalls.some(u => u.includes("firewall/whitelist"))) throw new Error("GGY API MUST be called on cross C24 drift");
       if (notifications.length === 0) throw new Error("Must send push notification on subnet drift");
       if (!notifications[0].t.includes("网段自愈")) throw new Error("Notification title mismatch: " + notifications[0].t);
       if (store["ggy_fw_last_ip"] !== "117.136.99.12") throw new Error("last_ip not updated");
@@ -182,12 +196,12 @@ async function main() {
   await runTest("Manual Tap in Home Wi-Fi Executes",
     () => makeSandbox("tokens=tok1&skip_wifi=HomeWiFi", "button", { wifi: { ssid: "HomeWiFi" } }),
     (sb) => {
-      if (!httpCalls.some(u => u.includes("guguyun.com"))) throw new Error("Manual button tap MUST execute even on home Wi-Fi");
+      if (!httpCalls.some(u => u.includes("firewall/whitelist"))) throw new Error("Manual button tap MUST execute even on home Wi-Fi");
       if (notifications.length === 0) throw new Error("Manual button tap should pop notification");
     }
   );
 
-  console.log("\n🎉 ALL 8 TESTS & EDGE CASES PASSED WITH 100% SUCCESS!");
+  console.log("\n🎉 ALL TESTS & TRAFFIC QUERY INTEGRATION PASSED WITH 100% SUCCESS!");
 }
 
 main().catch(err => {

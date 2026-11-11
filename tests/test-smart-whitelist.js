@@ -194,6 +194,23 @@ async function main() {
     }
   );
 
+  // Test 10: Auto-pair ctecstr_ traffic token mixed into tokens parameter
+  await runTest("Auto-pair ctecstr_ traffic token mixed into tokens",
+    () => makeSandbox("tokens=tok_wl@0,https://www.guguyun.com/cany_tencentecs/traffic/query?token=ctecstr_wOVqh6bZZG-41_xu9bEB2xsm7q4N23ew-g7LMeGCcjA&slot=0&from=panel"),
+    (sb) => {
+      // Whitelist MUST only be called for tok_wl, NOT for ctecstr_
+      const wlCalls = httpCalls.filter(u => u.includes("firewall/whitelist"));
+      if (wlCalls.length !== 1 || !wlCalls[0].includes("token=tok_wl%400")) {
+        throw new Error("Whitelist was incorrectly called with: " + JSON.stringify(wlCalls));
+      }
+      // Traffic query MUST be called with ctecstr_
+      const tfCalls = httpCalls.filter(u => u.includes("traffic/query"));
+      if (tfCalls.length !== 1 || !tfCalls[0].includes("ctecstr_wOVqh6bZZG-41_xu9bEB2xsm7q4N23ew-g7LMeGCcjA")) {
+        throw new Error("Traffic query was not called with ctecstr_: " + JSON.stringify(tfCalls));
+      }
+    }
+  );
+
   console.log("\n🎉 ALL TESTS PASSED SUCCESSFULLY!");
 }
 

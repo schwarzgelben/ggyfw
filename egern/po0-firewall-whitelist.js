@@ -517,7 +517,7 @@ export default async function (ctx) {
     }
   }
 
-  const tokens = parseTokens(ctx.env && ctx.env.tokens);
+  let tokens = parseTokens(ctx.env && ctx.env.tokens);
   if (tokens.length === 0) {
     ctx.notify({
       title: "GGY 防火墙加白",
@@ -527,8 +527,22 @@ export default async function (ctx) {
     return;
   }
 
+  // 智能区分加白 Token 与独立流量 Token（以 ctecstr_ 开头的属于流量 Token）
+  const whitelistTokens = [];
+  const inlineTrafficTokens = [];
+  tokens.forEach(tok => {
+    if (/^ctecstr_/i.test(tok)) {
+      inlineTrafficTokens.push(tok);
+    } else {
+      whitelistTokens.push(tok);
+    }
+  });
+
   const globalSlot = (ctx.env && ctx.env.slot) || "";
-  const trafficTokensArg = (ctx.env && (ctx.env.traffic_tokens || ctx.env.traffic_token)) || "";
+  const trafficTokensArg = (ctx.env && (ctx.env.traffic_tokens || ctx.env.traffic_token)) || (inlineTrafficTokens.length > 0 ? inlineTrafficTokens.join(",") : "");
+  if (whitelistTokens.length > 0 && inlineTrafficTokens.length > 0) {
+    tokens = whitelistTokens;
+  }
   const uaMode = (ctx.env && ctx.env.ua) || "mobile";
   const currentNet = getCurrentNetworkKey(ctx);
   const lastNet = ctx.storage.get(STORE_PREFIX + "last_net") || "";

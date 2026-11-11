@@ -869,6 +869,22 @@ function runMain(skipWhitelist) {
       );
     });
 
+  // 智能区分加白 Token 与独立流量 Token（若混填在 tokens 参数中，自动提取 ctecstr_ 流量 Token）
+  var whitelistTokens = [];
+  var inlineTrafficTokens = [];
+  tokens.forEach(function (tok) {
+    if (/^ctecstr_/i.test(tok)) {
+      inlineTrafficTokens.push(tok);
+    } else {
+      whitelistTokens.push(tok);
+    }
+  });
+
+  var effectiveTrafficTokens = argConfig.traffic_tokens || (inlineTrafficTokens.length > 0 ? inlineTrafficTokens.join(",") : "");
+  if (whitelistTokens.length > 0 && inlineTrafficTokens.length > 0) {
+    tokens = whitelistTokens;
+  }
+
   if (tokens.length === 0) {
     notify(
       "GGY 防火墙加白",
@@ -905,7 +921,7 @@ function runMain(skipWhitelist) {
         })
       );
 
-  Promise.all([whitelistPromise, fetchAllTraffic(tokenItems, argConfig.traffic_tokens)])
+  Promise.all([whitelistPromise, fetchAllTraffic(tokenItems, effectiveTrafficTokens)])
     .then(function (res) {
       var results = res[0];
       var trafficLines = res[1];

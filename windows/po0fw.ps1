@@ -16,6 +16,9 @@ $confPath = Join-Path $env:ProgramData "po0fw\po0fw.conf"
 if (-not $Tokens -and (Test-Path $confPath)) {
     $Tokens = (Get-Content $confPath -Raw).Trim()
 }
+if (-not $Tokens -and $TrafficTokens) {
+    $Tokens = $TrafficTokens
+}
 if (-not $Tokens) {
     Write-Error "未配置 token。用 -Tokens 参数或写入 $confPath"
     exit 1
@@ -29,6 +32,7 @@ $userAgent = if ($UaMode -eq "pc") {
 } else {
     "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
 }
+$trafficUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
 function Get-GgyToken {
     param([string]$InputStr)
@@ -42,17 +46,40 @@ function Get-GgyToken {
     return $s
 }
 
+# 智能识别与区分白名单 Token 和独立流量 Token
+$wlList = [System.Collections.Generic.List[string]]::new()
+$tfList = [System.Collections.Generic.List[string]]::new()
+foreach ($item in @($Tokens -split '[,;|\r\n\s]+' | Where-Object { $_ -ne "" })) {
+    $t = Get-GgyToken -InputStr $item
+    if (-not $t) { continue }
+    if ($t -match '^ctecstr_') {
+        $tfList.Add($t)
+    } else {
+        $wlList.Add($t)
+    }
+}
+
+if ($wlList.Count -gt 0 -and $tfList.Count -gt 0) {
+    $targetEntries = @($wlList)
+    if (-not $TrafficTokens) {
+        $TrafficTokens = $tfList -join ','
+    }
+} elseif ($wlList.Count -eq 0 -and $tfList.Count -gt 0) {
+    $targetEntries = @($tfList)
+    $Traffic = $true
+} else {
+    $targetEntries = @($wlList)
+}
+
 $fail = $false
 $idx = 0
-foreach ($entry in $Tokens.Split(',')) {
+foreach ($entry in $targetEntries) {
     $idx++
-    $entry = $entry.Trim()
-    if (-not $entry) { continue }
     $tok = Get-GgyToken -InputStr $entry
     if (-not $tok) { continue }
 
-    # 槽位处理
-    if ($tok -notmatch '@' -and $Slot) {
+    # 槽位处理（仅白名单 Token 处理槽位）
+    if ($tok -notmatch '@' -and $Slot -and $tok -notmatch '^ctecstr_') {
         $tok = "$tok@$Slot"
     }
 
@@ -79,18 +106,20 @@ foreach ($entry in $Tokens.Split(',')) {
     }
 
     # 查询流量信息（使用纯净 baseTok 或独立指定 TrafficTokens）
-    $targetTrafficTok = $baseTok
+    $targetTrafficTok = $baseTok -replace '[@%].*$', ''
     if ($TrafficTokens) {
-        $tList = $TrafficTokens -split '[,;|\s]+' | Where-Object { $_ -ne "" }
+        $tList = @($TrafficTokens -split '[,;|\r\n\s]+' | Where-Object { $_ -ne "" })
         if ($tList.Count -ge $idx) {
-            $rawT = $tList[$idx - 1]
-            if ($rawT -match '[?&]token=([^&#\s]+)') { $rawT = $matches[1] }
+            $rawT = Get-GgyToken -InputStr $tList[$idx - 1]
+            $targetTrafficTok = $rawT -replace '[@%].*$', ''
+        } elseif ($tList.Count -eq 1) {
+            $rawT = Get-GgyToken -InputStr $tList[0]
             $targetTrafficTok = $rawT -replace '[@%].*$', ''
         }
     }
     $tUrl = "$TrafficApiBase`?token=$targetTrafficTok"
     try {
-        $tRes = Invoke-RestMethod -Method Get -Uri $tUrl -TimeoutSec 10 -Headers @{ "Accept" = "application/json"; "User-Agent" = $userAgent }
+        $tRes = Invoke-RestMethod -Method Get -Uri $tUrl -TimeoutSec 15 -Headers @{ "Accept" = "application/json, text/plain, */*"; "User-Agent" = $trafficUserAgent }
         if ($tRes.status -eq 200 -and $tRes.data) {
             $d = $tRes.data
             $uGb = if ($d.used_gb -ne $null) { [math]::Round([double]$d.used_gb, 2) } elseif ($d.used_transfer -ne $null) { [math]::Round([double]$d.used_transfer / 1048576, 2) } else { $null }
@@ -111,7 +140,16 @@ foreach ($entry in $Tokens.Split(',')) {
                     Write-Host "[po0fw] #$idx [$short…] 📊 流量: $u / $tot$rstInfo"
                 }
             }
+        } elseif ($Traffic) {
+            $errMsg = if ($tRes.msg) { $tRes.msg } else { "接口状态 $($tRes.status)" }
+            Write-Host "[po0fw] #$idx [$short…] ❌ 流量查询失败: $errMsg"
+            $fail = $true
         }
-    } catch {}
+    } catch {
+        if ($Traffic) {
+            Write-Host "[po0fw] #$idx [$short…] ❌ 流量查询异常: $_"
+            $fail = $true
+        }
+    }
 }
 if ($fail) { exit 1 }

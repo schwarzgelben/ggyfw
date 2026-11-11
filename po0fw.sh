@@ -39,8 +39,15 @@ if [ "$PO0FW_UA" = "pc" ]; then
 else
   USER_AGENT="Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
 fi
+TRAFFIC_USER_AGENT="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
-CURL_OPTS="-4sS -m 20 --retry 2 --retry-delay 2 -H Accept:application/json -A $USER_AGENT"
+curl_api() {
+  curl -4sS -m 20 --retry 2 --retry-delay 2 -H "Accept: application/json" -A "$USER_AGENT" -X GET "$1"
+}
+
+curl_traffic() {
+  curl -4sS -m 15 --retry 2 --retry-delay 2 -H "Accept: application/json, text/plain, */*" -A "$TRAFFIC_USER_AGENT" -X GET "$1"
+}
 
 MODE="add"
 ARG_TOKENS=""
@@ -86,6 +93,34 @@ extract_token() {
   esac
 }
 
+# 智能识别与区分白名单 Token 和独立流量 Token
+WL_TOKENS=""
+TF_TOKENS=""
+OLDIFS=$IFS; IFS=',; '
+for entry in $TOKENS; do
+  entry=$(echo "$entry" | tr -d ' ')
+  [ -z "$entry" ] && continue
+  t=$(extract_token "$entry")
+  [ -z "$t" ] && continue
+  case "$t" in
+    ctecstr_*)
+      TF_TOKENS="${TF_TOKENS:+$TF_TOKENS,}$t"
+      ;;
+    *)
+      WL_TOKENS="${WL_TOKENS:+$WL_TOKENS,}$t"
+      ;;
+  esac
+done
+IFS=$OLDIFS
+
+if [ -n "$WL_TOKENS" ] && [ -n "$TF_TOKENS" ]; then
+  TOKENS="$WL_TOKENS"
+  [ -z "$TRAFFIC_TOKENS" ] && TRAFFIC_TOKENS="$TF_TOKENS"
+elif [ -z "$WL_TOKENS" ] && [ -n "$TF_TOKENS" ]; then
+  TOKENS="$TF_TOKENS"
+  MODE="traffic"
+fi
+
 FAIL=0
 IDX=0
 OLDIFS=$IFS; IFS=','
@@ -118,7 +153,7 @@ for entry in $TOKENS; do
 
   if [ "$MODE" != "traffic" ]; then
     url="${API_BASE}?token=${tok}"
-    res=$(curl $CURL_OPTS -X GET "$url" 2>&1)
+    res=$(curl_api "$url" 2>&1)
 
     status=$(echo "$res" | sed -n 's/.*"status":\([0-9]*\).*/\1/p')
     msg=$(echo "$res" | sed -n 's/.*"msg":"\([^"]*\)".*/\1/p')
@@ -135,25 +170,32 @@ for entry in $TOKENS; do
   target_traffic_tok="$base_tok"
   if [ -n "$TRAFFIC_TOKENS" ]; then
     t_item=$(echo "$TRAFFIC_TOKENS" | awk -F',' -v i="$IDX" '{print $i}' | tr -d ' ')
-    [ -n "$t_item" ] && target_traffic_tok=$(extract_token "$t_item" | sed 's/[@%].*//')
+    if [ -n "$t_item" ]; then
+      target_traffic_tok=$(extract_token "$t_item" | sed 's/[@%].*//')
+    fi
   fi
   turl="${TRAFFIC_API_BASE}?token=${target_traffic_tok}"
-  tres=$(curl $CURL_OPTS -X GET "$turl" 2>/dev/null || true)
+  tres=$(curl_traffic "$turl" 2>/dev/null || true)
   tstatus=$(echo "$tres" | sed -n 's/.*"status":\([0-9]*\).*/\1/p')
   if [ "$tstatus" = "200" ]; then
     tused_gb=$(echo "$tres" | sed -n 's/.*"used_gb":\([0-9.]*\).*/\1/p')
     ttotal_gb=$(echo "$tres" | sed -n 's/.*"total_gb":\([0-9.]*\).*/\1/p')
     trem_gb=$(echo "$tres" | sed -n 's/.*"remaining_gb":\([0-9.]*\).*/\1/p')
     tunlimited=$(echo "$tres" | sed -n 's/.*"unlimited":\([a-z]*\).*/\1/p')
-    treset=$(echo "$tres" | sed -n 's/.*"reset_\(time\|date\)":"\([^"]*\)".*/\2/p')
+    treset=$(echo "$tres" | sed -n 's/.*"reset_time":"\([^"]*\)".*/\1/p')
+    [ -z "$treset" ] && treset=$(echo "$tres" | sed -n 's/.*"reset_date":"\([^"]*\)".*/\1/p')
 
     if [ -n "$tused_gb" ] && [ -n "$ttotal_gb" ]; then
       u_disp=$(printf "%.2f" "$tused_gb" 2>/dev/null || echo "$tused_gb")
       tot_disp=$(printf "%.0f" "$ttotal_gb" 2>/dev/null || echo "$ttotal_gb")
       rem_disp=""
       [ -n "$trem_gb" ] && rem_disp=" · 余 $(printf "%.1f" "$trem_gb" 2>/dev/null || echo "$trem_gb") GB"
-      [ "$tunlimited" = "true" ] && tot_disp="无限" && rem_disp=""
-      log "#$IDX [${short}…] 📊 流量: ${u_disp} GB / ${tot_disp} GB${rem_disp}${treset:+ · 重置: $treset}"
+      tot_str="${tot_disp} GB"
+      if [ "$tunlimited" = "true" ]; then
+        tot_str="无限"
+        rem_disp=""
+      fi
+      log "#$IDX [${short}…] 📊 流量: ${u_disp} GB / ${tot_str}${rem_disp}${treset:+ · 重置: $treset}"
     else
       tused=$(echo "$tres" | sed -n 's/.*"used":"\([^"]*\)".*/\1/p')
       ttotal=$(echo "$tres" | sed -n 's/.*"total":"\([^"]*\)".*/\1/p')

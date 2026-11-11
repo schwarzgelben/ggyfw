@@ -445,7 +445,11 @@ async function queryTraffic(ctx, baseToken, index, multi) {
 
     if (!data) {
       if (cached && !isTrafficError(cached)) return cached;
-      return `📊 流量: ${apiMsg || "无数据"}`;
+      let msg = apiMsg || "无数据";
+      if (!pureToken.toLowerCase().startsWith("ctecstr_") && (msg.includes("暂不可用") || msg.includes("请确认链接有效"))) {
+        msg = "暂不可用 (需填入独立流量查询Token)";
+      }
+      return `📊 流量: ${msg}`;
     }
     const parsed = parseTrafficData(data);
     if (parsed && parsed.line) {
@@ -540,6 +544,7 @@ export default async function (ctx) {
 
   const globalSlot = (ctx.env && ctx.env.slot) || "";
   const trafficTokensArg = (ctx.env && (ctx.env.traffic_tokens || ctx.env.traffic_token)) || (inlineTrafficTokens.length > 0 ? inlineTrafficTokens.join(",") : "");
+  const isOnlyTrafficTokens = whitelistTokens.length === 0 && inlineTrafficTokens.length > 0;
   if (whitelistTokens.length > 0 && inlineTrafficTokens.length > 0) {
     tokens = whitelistTokens;
   }
@@ -565,9 +570,11 @@ export default async function (ctx) {
     const item = tokenItems[i];
     const st = onHomeWifi
       ? { applied: true, msg: "家庭 Wi-Fi (跳过加白防占坑)" }
-      : await apiCall(ctx, item.actualToken, uaMode);
+      : (isOnlyTrafficTokens
+          ? { applied: true, msg: "流量专属 Token" }
+          : await apiCall(ctx, item.actualToken, uaMode));
     results.push({ item: item, st: st, kvState: STORE_PREFIX + i });
-    const targetTrafficTok = trafficTokens[i] || item.baseToken;
+    const targetTrafficTok = trafficTokens[i] || (trafficTokens.length === 1 ? trafficTokens[0] : item.baseToken);
     const traf = await queryTraffic(ctx, targetTrafficTok, i, tokenItems.length > 1);
     if (traf) trafficLines.push(traf);
   }
@@ -617,7 +624,9 @@ export default async function (ctx) {
 
   const title = onHomeWifi
     ? `GGY 加白 · 🌐 Wi-Fi: ${currentSSID || "家庭"}`
-    : `GGY 加白 ${okCount}/${results.length}${cellular ? " 📶 移动网络" : " 🌐 Wi-Fi"}`;
+    : (isOnlyTrafficTokens
+        ? `GGY 流量查询${cellular ? " 📶 移动网络" : " 🌐 Wi-Fi"}`
+        : `GGY 加白 ${okCount}/${results.length}${cellular ? " 📶 移动网络" : " 🌐 Wi-Fi"}`);
 
   const contentParts = [];
   if (trafficLines.length > 0) contentParts.push(trafficLines.join("\n"));

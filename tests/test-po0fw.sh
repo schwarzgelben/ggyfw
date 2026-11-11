@@ -30,4 +30,13 @@ printf '%s\n' "$add_output"
 printf '%s\n' "$add_output" | grep -F '✅ 加白成功: 添加白名单成功' >/dev/null
 printf '%s\n' "$add_output" | grep -F '📊 流量: 2.67 GB / 800 GB' >/dev/null
 
+traffic_only_output=$(run_po0fw 'ctecstr_dummy_traffic')
+printf '%s\n' "$traffic_only_output"
+printf '%s\n' "$traffic_only_output" | grep -F '📊 流量: 2.67 GB / 800 GB' >/dev/null
+
+mixed_output=$(run_po0fw 'dummy_ggy_token,ctecstr_dummy_traffic')
+printf '%s\n' "$mixed_output"
+printf '%s\n' "$mixed_output" | grep -F '✅ 加白成功: 添加白名单成功' >/dev/null
+printf '%s\n' "$mixed_output" | grep -F '📊 流量: 2.67 GB / 800 GB' >/dev/null
+
 echo 'po0fw shell tests passed'

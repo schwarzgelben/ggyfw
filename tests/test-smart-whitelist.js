@@ -211,6 +211,29 @@ async function main() {
     }
   );
 
+  // Test 11: Only traffic token provided (no whitelist token) skips whitelist and displays traffic
+  await runTest("Only traffic token provided (traffic mode)",
+    () => makeSandbox("tokens=ctecstr_wOVqh6bZZG-41_xu9bEB2xsm7q4N23ew-g7LMeGCcjA&from=panel"),
+    (sb) => {
+      const wlCalls = httpCalls.filter(u => u.includes("firewall/whitelist"));
+      if (wlCalls.length !== 0) throw new Error("Should not call whitelist for ctecstr_: " + JSON.stringify(wlCalls));
+      if (!doneResult.title.includes("流量查询")) throw new Error("Title should indicate traffic query mode: " + doneResult.title);
+      if (!doneResult.content.includes("2.67 GB / 800 GB")) throw new Error("Traffic stats missing: " + doneResult.content);
+    }
+  );
+
+  // Test 12: Single traffic token shared across multiple whitelist nodes
+  await runTest("Single traffic token shared across multiple whitelist tokens",
+    () => makeSandbox("tokens=node1,node2&traffic_tokens=ctecstr_shared&from=panel"),
+    (sb) => {
+      const tfCalls = httpCalls.filter(u => u.includes("traffic/query"));
+      if (tfCalls.length !== 2) throw new Error("Expected 2 traffic calls: " + JSON.stringify(tfCalls));
+      if (!tfCalls[0].includes("token=ctecstr_shared") || !tfCalls[1].includes("token=ctecstr_shared")) {
+        throw new Error("Shared traffic token was not used for both nodes: " + JSON.stringify(tfCalls));
+      }
+    }
+  );
+
   console.log("\n🎉 ALL TESTS PASSED SUCCESSFULLY!");
 }
 

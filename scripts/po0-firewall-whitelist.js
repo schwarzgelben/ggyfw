@@ -697,7 +697,11 @@ function queryTraffic(baseToken, index, multi) {
         if (cached && !isTrafficError(cached)) {
           return cached;
         }
-        return "📊 流量: " + (apiMsg || ("接口状态 " + (j ? j.status : "异常")));
+        var msg = apiMsg || ("接口状态 " + (j ? j.status : "异常"));
+        if (pureToken.toLowerCase().indexOf("ctecstr_") !== 0 && (msg.indexOf("暂不可用") !== -1 || msg.indexOf("请确认链接有效") !== -1)) {
+          msg = "暂不可用 (需填入独立流量查询Token)";
+        }
+        return "📊 流量: " + msg;
       }
 
       var parsed = parseTrafficData(data);
@@ -728,7 +732,7 @@ function fetchAllTraffic(tokenItems, trafficTokensArg) {
 
   return Promise.all(
     tokenItems.map(function (item, i) {
-      var tok = (trafficTokens[i] || item.baseToken);
+      var tok = (trafficTokens[i] || (trafficTokens.length === 1 ? trafficTokens[0] : item.baseToken));
       return queryTraffic(tok, i, tokenItems.length > 1);
     })
   );
@@ -886,6 +890,7 @@ function runMain(skipWhitelist) {
     (inlineTrafficTokens.length > 0 ? inlineTrafficTokens.join(",") : "") ||
     storeRead(TRAFFIC_TOKENS_KEY) ||
     "";
+  var isOnlyTrafficTokens = whitelistTokens.length === 0 && inlineTrafficTokens.length > 0;
   if (whitelistTokens.length > 0 && inlineTrafficTokens.length > 0) {
     tokens = whitelistTokens;
   }
@@ -910,21 +915,34 @@ function runMain(skipWhitelist) {
   });
 
   // 如果处于家庭 Wi-Fi 下，跳过向咕咕云调用加白 API（保护槽位配额），但依然并行查询最新流量！
-  var whitelistPromise = skipWhitelist
-    ? Promise.resolve(
-        tokenItems.map(function (it, i) {
-          return {
-            st: { applied: true, msg: "家庭 Wi-Fi (跳过加白防占坑)" },
-            item: it,
-            kvState: STORE_PREFIX + i,
-          };
-        })
-      )
-    : Promise.all(
-        tokenItems.map(function (it, i) {
-          return ensureWhitelisted(it, i, argConfig.ua);
-        })
-      );
+  var whitelistPromise;
+  if (skipWhitelist) {
+    whitelistPromise = Promise.resolve(
+      tokenItems.map(function (it, i) {
+        return {
+          st: { applied: true, msg: "家庭 Wi-Fi (跳过加白防占坑)" },
+          item: it,
+          kvState: STORE_PREFIX + i,
+        };
+      })
+    );
+  } else if (isOnlyTrafficTokens) {
+    whitelistPromise = Promise.resolve(
+      tokenItems.map(function (it, i) {
+        return {
+          st: { applied: true, msg: "流量专属 Token" },
+          item: it,
+          kvState: STORE_PREFIX + i,
+        };
+      })
+    );
+  } else {
+    whitelistPromise = Promise.all(
+      tokenItems.map(function (it, i) {
+        return ensureWhitelisted(it, i, argConfig.ua);
+      })
+    );
+  }
 
   Promise.all([whitelistPromise, fetchAllTraffic(tokenItems, effectiveTrafficTokens)])
     .then(function (res) {
@@ -973,9 +991,14 @@ function runMain(skipWhitelist) {
         storeWrite("0", STORE_PREFIX + "last_ok");
       }
 
-      var title = skipWhitelist
-        ? ("GGY 加白 · 🌐 Wi-Fi: " + (currentSSID || "家庭"))
-        : ("GGY 加白 " + okCount + "/" + results.length + (onCellular() ? " 📶 移动网络" : " 🌐 Wi-Fi"));
+      var title;
+      if (skipWhitelist) {
+        title = "GGY 加白 · 🌐 Wi-Fi: " + (currentSSID || "家庭");
+      } else if (isOnlyTrafficTokens) {
+        title = "GGY 流量查询" + (onCellular() ? " 📶 移动网络" : " 🌐 Wi-Fi");
+      } else {
+        title = "GGY 加白 " + okCount + "/" + results.length + (onCellular() ? " 📶 移动网络" : " 🌐 Wi-Fi");
+      }
 
       // 组装面板内容：流量第一优先级展示在首行！
       var contentParts = [];

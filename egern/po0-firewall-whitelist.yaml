@@ -1,5 +1,5 @@
 name: GGY 咕咕云防火墙自动加白
-description: 调用咕咕云 (GGY) 防火墙白名单链接将出口 IP 自动加入安全组，并展示实时流量。支持固定槽位 (@0~@4)、环形轮流写入、手机识别 /24 放行、2分钟极速自愈与面板手动刷新。
+description: 调用咕咕云 (GGY) 防火墙白名单链接将出口 IP 自动加入安全组，并展示实时流量。支持固定槽位 (@0~@4)、环形轮流写入、手机识别 /24 放行、网络切换自动加白与面板手动刷新。
 author: reallinzc
 homepage: https://github.com/schwarzgelben/ggyfw
 
@@ -13,23 +13,11 @@ rules:
   - domain:
       match: www.guguyun.com
       policy: DIRECT
-  - domain_suffix:
-      match: 3322.net
-      policy: DIRECT
-  - domain_suffix:
-      match: ip.sb
-      policy: DIRECT
-  - domain_suffix:
-      match: ipip.net
-      policy: DIRECT
-  - ip_cidr:
-      match: 1.1.1.1/32
-      policy: DIRECT
 
 scriptings:
   - schedule:
       name: ggy-fw-cron
-      cron: "*/2 * * * *"
+      cron: "*/10 * * * *"
       script_url: https://raw.githubusercontent.com/schwarzgelben/ggyfw/main/egern/po0-firewall-whitelist.js
       timeout: 60
       env:

@@ -48,6 +48,15 @@ function onCellular(ctx) {
   }
 }
 
+function getCurrentNetworkKey(ctx) {
+  try {
+    const d = ctx.device || {};
+    if (d.wifi && d.wifi.ssid) return "wifi:" + d.wifi.ssid;
+    if (onCellular(ctx)) return "cellular";
+  } catch (e) {}
+  return "unknown";
+}
+
 function sleep(ms) {
   return new Promise(function (resolve) {
     setTimeout(resolve, ms);
@@ -93,28 +102,13 @@ function isValidIPv4(ip) {
 function extractIPv4(text) {
   if (!text) return "";
   const s = String(text).trim();
-  const mTrace = s.match(/(?:^|\n)ip=([0-9.]+)/);
-  if (mTrace && mTrace[1]) {
-    const traceIp = mTrace[1].trim();
-    if (isValidIPv4(traceIp)) return traceIp;
-  }
   const m = s.match(/\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b/);
   if (m && m[0]) {
-    if (m[0] !== "1.1.1.1" && m[0] !== "1.0.0.1" && m[0] !== "8.8.8.8" && m[0] !== "127.0.0.1" && m[0] !== "0.0.0.0") {
+    if (m[0] !== "127.0.0.1" && m[0] !== "0.0.0.0") {
       return m[0];
     }
   }
   return "";
-}
-
-function sameC24(ip1, ip2) {
-  if (!ip1 || !ip2) return false;
-  const s1 = String(ip1).trim();
-  const s2 = String(ip2).trim();
-  const seg1 = s1.split(".");
-  const seg2 = s2.split(".");
-  if (seg1.length !== 4 || seg2.length !== 4) return false;
-  return seg1[0] === seg2[0] && seg1[1] === seg2[1] && seg1[2] === seg2[2];
 }
 
 function getCSubnet(ip) {
@@ -171,7 +165,7 @@ function parseSlotConfig(tokenStr, globalSlotArg) {
   return { baseToken, slotMode, fixedSlot, rotateSlots };
 }
 
-function resolveActualToken(ctx, rawToken, index, globalSlotArg, isSubnetDrift) {
+function resolveActualToken(ctx, rawToken, index, globalSlotArg, shouldAdvanceRotate) {
   const cfg = parseSlotConfig(rawToken, globalSlotArg);
   const slotKey = STORE_PREFIX + "slot_active_" + index;
   const storedSlot = ctx.storage.get(slotKey);
@@ -190,7 +184,7 @@ function resolveActualToken(ctx, rawToken, index, globalSlotArg, isSubnetDrift) 
       const lastSlotNum = parseInt(storedSlot, 10);
       let pos = cfg.rotateSlots.indexOf(lastSlotNum);
       if (pos === -1) pos = 0;
-      if (isSubnetDrift) {
+      if (shouldAdvanceRotate) {
         pos = (pos + 1) % cfg.rotateSlots.length;
       }
       slotIdx = pos;
@@ -212,25 +206,6 @@ function resolveActualToken(ctx, rawToken, index, globalSlotArg, isSubnetDrift) 
     rotateSlots: cfg.rotateSlots,
     slotKey: slotKey,
   };
-}
-
-async function detectPublicIp(ctx) {
-  const probeUrls = [
-    "http://ip.3322.net",
-    "http://api-ipv4.ip.sb/ip",
-    "http://myip.ipip.net",
-    "https://1.1.1.1/cdn-cgi/trace"
-  ];
-  for (const url of probeUrls) {
-    try {
-      const r = await httpGetOnce(ctx, url, { "User-Agent": "curl/7.88.1" });
-      if (!r.netError && r.text) {
-        const ip = extractIPv4(r.text);
-        if (ip) return ip;
-      }
-    } catch (e) {}
-  }
-  return "";
 }
 
 function formatTrafficBytes(val, unit) {
@@ -268,7 +243,6 @@ function parseTrafficData(data) {
   if (data.traffic && typeof data.traffic === "object") data = data.traffic;
 
   const unit = data.unit || data.traffic_unit || "";
-
   const rawUsed = data.used !== undefined ? data.used :
                  (data.traffic_used !== undefined ? data.traffic_used :
                  (data.used_traffic !== undefined ? data.used_traffic :
@@ -293,7 +267,7 @@ function parseTrafficData(data) {
                   (data.reset_time !== undefined ? data.reset_time :
                   (data.traffic_reset !== undefined ? data.traffic_reset :
                   (data.next_reset !== undefined ? data.next_reset :
-                  (data.reset_day !== undefined ? "每月 " + data.reset_day + " 日" :
+                  (data.reset_day !== undefined ? `每月 ${data.reset_day} 日` :
                   (data.reset !== undefined ? data.reset : null)))));
 
   const usedStr = formatTrafficBytes(rawUsed, unit);
@@ -303,7 +277,7 @@ function parseTrafficData(data) {
   let percentStr = "";
   if (data.percent !== undefined) {
     percentStr = String(data.percent);
-    if (!percentStr.includes("%")) percentStr += "%";
+    if (percentStr.indexOf("%") === -1) percentStr += "%";
   } else if (rawUsed !== null && rawTotal !== null) {
     const uNum = parseFloat(String(rawUsed));
     const tNum = parseFloat(String(rawTotal));
@@ -314,30 +288,28 @@ function parseTrafficData(data) {
 
   let line = "";
   if (usedStr && totalStr) {
-    line = "流量: " + usedStr + " / " + totalStr + (percentStr ? " (" + percentStr + ")" : "");
+    line = `流量: ${usedStr} / ${totalStr}${percentStr ? ` (${percentStr})` : ""}`;
   } else if (restStr && totalStr) {
-    line = "流量: 余 " + restStr + " / 共 " + totalStr;
+    line = `流量: 余 ${restStr} / 共 ${totalStr}`;
   } else if (usedStr) {
-    line = "已用: " + usedStr;
+    line = `已用: ${usedStr}`;
   } else if (restStr) {
-    line = "剩余: " + restStr;
+    line = `剩余: ${restStr}`;
   }
 
   if (rawReset) {
     const resetStr = String(rawReset).replace(/^\d{4}-/, "").replace(/\s.*$/, "");
     if (resetStr) {
-      if (line) line += " · " + resetStr + " 重置";
-      else line = "重置: " + resetStr;
+      line = line ? `${line} · ${resetStr} 重置` : `重置: ${resetStr}`;
     }
   }
 
-  return { line: line, used: usedStr, total: totalStr, rest: restStr, reset: rawReset };
+  return { line, used: usedStr, total: totalStr, rest: restStr, reset: rawReset };
 }
 
 async function queryTraffic(ctx, baseToken, index, multi) {
   const kvKey = STORE_PREFIX + "traffic_" + index;
   const kvTsKey = STORE_PREFIX + "traffic_ts_" + index;
-
   const cached = ctx.storage.get(kvKey) || "";
   const cachedTs = parseInt(ctx.storage.get(kvTsKey) || "0", 10);
   const now = Date.now();
@@ -348,30 +320,31 @@ async function queryTraffic(ctx, baseToken, index, multi) {
   }
 
   const url = TRAFFIC_API_BASE + encodeURIComponent(baseToken);
-  const r = await httpGetOnce(ctx, url, {
-    "User-Agent":
-      "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
-    Accept: "application/json, text/plain, */*",
-  });
-
-  if (r.netError) return cached;
-  let data = null;
   try {
-    const j = JSON.parse(r.text);
-    if (j && (j.status === 200 || j.code === 200) && j.data) {
-      data = j.data;
+    const r = await httpGetOnce(ctx, url, {
+      "User-Agent":
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+      Accept: "application/json, text/plain, */*",
+    });
+    if (r.netError) return cached;
+    let data = null;
+    try {
+      const j = JSON.parse(r.text);
+      if (j && (j.status === 200 || j.code === 200) && j.data) {
+        data = j.data;
+      }
+    } catch (e) {}
+
+    if (!data) return cached;
+    const parsed = parseTrafficData(data);
+    if (parsed && parsed.line) {
+      const prefix = multi ? `📊 #${index + 1} ` : "📊 ";
+      const line = prefix + parsed.line;
+      ctx.storage.set(kvKey, line);
+      ctx.storage.set(kvTsKey, String(now));
+      return line;
     }
   } catch (e) {}
-
-  if (!data) return cached;
-  const parsed = parseTrafficData(data);
-  if (parsed && parsed.line) {
-    const prefix = multi ? "📊 #" + (index + 1) + " " : "📊 ";
-    const line = prefix + parsed.line;
-    ctx.storage.set(kvKey, line);
-    ctx.storage.set(kvTsKey, String(now));
-    return line;
-  }
   return cached;
 }
 
@@ -391,12 +364,17 @@ async function apiCall(ctx, actualToken, uaMode) {
     if (!r.netError) {
       try {
         const j = JSON.parse(r.text);
-        if (j.status === 400) break; // 业务错误不重试
-      } catch (e) {}
+        if (j && j.status === 400) break;
+      } catch (e) {
+        if (r.status >= 200 && r.status < 300) break;
+      }
       if (r.status >= 200 && r.status < 500) break;
     }
-    if (attempt < HTTP_RETRY) await sleep(HTTP_RETRY_DELAY_MS * attempt);
+    if (attempt < HTTP_RETRY) {
+      await sleep(HTTP_RETRY_DELAY_MS * attempt);
+    }
   }
+
   if (r.netError) return { applied: false, error: r.netError + "（已重试 " + HTTP_RETRY + " 次）" };
 
   let data = null;
@@ -407,9 +385,9 @@ async function apiCall(ctx, actualToken, uaMode) {
   if (!data) return { applied: false, error: "响应非 JSON: " + String(r.text).slice(0, 80) };
 
   if (data.status === 200) {
-    return { applied: true, msg: data.msg || "加白成功" };
+    return { applied: true, msg: data.msg || "加白成功", data: data.data };
   } else {
-    return { applied: false, error: data.msg || ("加白失败 (状态 " + data.status + ")") };
+    return { applied: false, error: data.msg || ("加白失败 (状态 " + data.status + ")"), data: data.data };
   }
 }
 
@@ -435,24 +413,11 @@ export default async function (ctx) {
 
   const globalSlot = (ctx.env && ctx.env.slot) || "";
   const uaMode = (ctx.env && ctx.env.ua) || "mobile";
-  const isMobileUa = uaMode.toLowerCase() !== "pc";
-  const currentIp = await detectPublicIp(ctx);
+  const currentNet = getCurrentNetworkKey(ctx);
+  const lastNet = ctx.storage.get(STORE_PREFIX + "last_net") || "";
+  const netChanged = lastNet && currentNet !== lastNet;
 
-  const lastIp = ctx.storage.get(STORE_PREFIX + "last_ip") || "";
-  const lastTs = parseInt(ctx.storage.get(STORE_PREFIX + "last_ts") || "0", 10);
-  const lastOk = ctx.storage.get(STORE_PREFIX + "last_ok") === "1";
-  const now = Date.now();
-  const maxAgeMs = (parseInt((ctx.env && ctx.env.interval) || "10", 10) || 10) * 60 * 1000;
-
-  const ipDrift = lastIp && currentIp && (isMobileUa ? !sameC24(currentIp, lastIp) : currentIp !== lastIp);
-  const tokenItems = tokens.map((t, i) => resolveActualToken(ctx, t, i, globalSlot, ipDrift));
-
-  // 智能探活节流：同 /24 且保活期内跳过 API 请求
-  if (lastOk && currentIp && lastIp && now - lastTs < maxAgeMs) {
-    if (isMobileUa ? sameC24(currentIp, lastIp) : currentIp === lastIp) {
-      return; // 静默放行
-    }
-  }
+  const tokenItems = tokens.map((t, i) => resolveActualToken(ctx, t, i, globalSlot, netChanged));
 
   const cellular = onCellular(ctx);
   const results = [];
@@ -467,6 +432,7 @@ export default async function (ctx) {
 
   let okCount = 0;
   let changed = false;
+  let responseIp = "";
   const lines = [];
   for (let i = 0; i < results.length; i++) {
     const res = results[i];
@@ -481,14 +447,22 @@ export default async function (ctx) {
       ctx.storage.set(res.kvState, state);
       changed = true;
     }
+
+    if (!responseIp) {
+      const scanText = (st.msg || "") + " " + JSON.stringify(st.data || {});
+      const foundIp = extractIPv4(scanText);
+      if (foundIp) responseIp = foundIp;
+    }
   }
 
   const allOk = okCount === results.length;
+  const now = Date.now();
 
   if (allOk) {
-    if (currentIp) ctx.storage.set(STORE_PREFIX + "last_ip", currentIp);
+    ctx.storage.set(STORE_PREFIX + "last_net", currentNet);
     ctx.storage.set(STORE_PREFIX + "last_ts", String(now));
     ctx.storage.set(STORE_PREFIX + "last_ok", "1");
+    if (responseIp) ctx.storage.set(STORE_PREFIX + "last_ip", responseIp);
 
     tokenItems.forEach(it => {
       if (it.slotMode === "rotate" && it.activeSlot !== null) {
@@ -506,13 +480,14 @@ export default async function (ctx) {
   if (trafficLines.length > 0) {
     content += "\n" + trafficLines.join("\n");
   }
-  if (currentIp) {
-    content += "\n出口 IP: " + currentIp + (isMobileUa ? " (" + getCSubnet(currentIp) + ")" : " (/32)");
+  if (responseIp) {
+    const isMobileUa = uaMode.toLowerCase() !== "pc";
+    content += "\n出口 IP: " + responseIp + (isMobileUa ? " (" + getCSubnet(responseIp) + ")" : " (/32)");
   }
 
-  if (changed || ipDrift || !allOk) {
+  if (changed || !allOk) {
     ctx.notify({
-      title: ipDrift ? "GGY 加白 · 网段自愈" : "GGY 防火墙加白",
+      title: "GGY 防火墙加白",
       subtitle: title,
       body: content,
     });

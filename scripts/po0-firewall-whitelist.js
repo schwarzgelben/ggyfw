@@ -9,27 +9,18 @@
  * 1. 固定槽位写入：在 token 末尾追加 @0 ~ @4（例如 token@0），或指定参数 slot=0。
  *    每个固定槽位在手机 UA 下放行对应基站的整段 /24 网段。
  * 2. 轮流写入（环形槽位池）：指定 token@rotate（或 token@0-4 / 参数 slot=rotate）。
- *    每次检测到跨基站网段漂移（新 C 段）时，自动轮换写入下一个槽位（0 -> 1 -> 2 -> 3 -> 4 -> 0）。
- *    这使得用户最近经过的 5 个基站网段同时保持加白，多地点往返无缝零断流！
+ *    网络切换或跨网漫游时自动轮流写入下一个槽位（0 -> 1 -> 2 -> 3 -> 4 -> 0），
+ *    使得用户最近经过的 5 个基站/网络同时保持加白。
  * 3. 流量查询自动脱敏：查询流量时自动剥离 @0~@4 后缀，保证流量接口稳定命中。
  *
- * 智能探活与自愈机制（方案 1）：
- * 1. 识别手机 UA（ua=mobile，默认）：固定槽位链接放行整段 /24（256个IP）。
- * 2. 轻量公网 IP 嗅探：直连探测本机出口公网 IP（直连 3322.net / ip.sb / ipip.net / 1.1.1.1）。
- * 3. 同 C 段智能节流：若当前出口 IP 与上次加白 IP 处于同一 /24 网段且在保活期内，
- *    判定为安全组已放行，自动跳过咕咕云加白 API 请求（零频次消耗、零断流）。
- * 4. 越界秒级自愈：每 2 分钟高频 cron 探活，一旦检测到基站 IP 跳出 /24 网段，
- *    立即发起咕咕云加白请求，将新网段加入防火墙，实现无感自愈。
- * 5. 手动刷新：点击面板按钮立即强制重新加白并刷新流量与状态。
- *
  * 分流注意：
- * 加白请求、流量查询与 IP 嗅探必须直连！必须配置分流规则：
+ * 加白请求与流量查询必须直连！必须配置分流规则：
  * DOMAIN,www.guguyun.com,DIRECT
- * DOMAIN-SUFFIX,3322.net,DIRECT
- * DOMAIN-SUFFIX,ip.sb,DIRECT
- * DOMAIN-SUFFIX,ipip.net,DIRECT
- * IP-CIDR,1.1.1.1/32,DIRECT,no-resolve
- * DOMAIN,1.1.1.1,DIRECT
+ *
+ * token 来源（优先级从高到低）：
+ * 1. argument: tokens=<token 或完整 URL>（Surge/Loon/Stash 模块参数，支持多 token 逗号或换行分割）
+ * 2. 持久化存储 key "ggy_tokens" 或 "po0fw_tokens"（Quantumult X 等客户端可通过 BoxJs 写入）
+ * 3. 下面的 INLINE_TOKENS 常量
  */
 
 var INLINE_TOKENS = "";
@@ -157,7 +148,6 @@ function httpRequest(method, opts, attempt) {
 function extractToken(raw) {
   if (!raw) return "";
   var s = String(raw).trim();
-  // 提取包含 @0~5 或 @rotate 的完整 token
   var m = s.match(/[?&]token=([^&#\s]+)/);
   if (m && m[1]) return decodeURIComponent(m[1]);
   if (/^https?:\/\//i.test(s)) return "";
@@ -168,7 +158,7 @@ function parseArgument() {
   var res = { tokens: "", skip_wifi: "", ua: "mobile", interval: "10", force: "0", slot: "" };
   if (typeof $argument === "undefined" || $argument === null) return res;
 
-  // 1. Loon 数组对象传参: [tokens, skip_wifi, ua, slot]
+  // 1. Loon 数组对象传参: [tokens, skip_wifi, ua, slot, interval]
   if (Array.isArray($argument)) {
     if ($argument[0] !== undefined) res.tokens = String($argument[0]);
     if ($argument[1] !== undefined) res.skip_wifi = String($argument[1]);
@@ -278,6 +268,34 @@ function onCellular() {
   }
 }
 
+function getCurrentNetworkKey() {
+  var ssid = getWifiSSID();
+  if (ssid) return "wifi:" + ssid;
+  if (onCellular()) return "cellular";
+  return "unknown";
+}
+
+function isValidIPv4(ip) {
+  return /^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/.test(ip);
+}
+
+function extractIPv4(text) {
+  if (!text) return "";
+  var s = String(text).trim();
+  var m = s.match(/\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b/);
+  if (m && m[0]) {
+    if (m[0] !== "127.0.0.1" && m[0] !== "0.0.0.0") return m[0];
+  }
+  return "";
+}
+
+function getCSubnet(ip) {
+  if (!ip) return "";
+  var seg = String(ip).trim().split(".");
+  if (seg.length !== 4) return ip;
+  return seg[0] + "." + seg[1] + "." + seg[2] + ".0/24";
+}
+
 function finish(title, content, allOk) {
   if (isQX) {
     $done();
@@ -291,91 +309,11 @@ function finish(title, content, allOk) {
   });
 }
 
-/* ---------- 公网 IP 探测与网段比较 ---------- */
-
-function isValidIPv4(ip) {
-  return /^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/.test(ip);
-}
-
-function extractIPv4(text) {
-  if (!text) return "";
-  var s = String(text).trim();
-
-  // 1. 优先针对 1.1.1.1/cdn-cgi/trace 的特定响应：匹配 ip=x.x.x.x，避免误取 h=1.1.1.1
-  var mTrace = s.match(/(?:^|\n)ip=([0-9.]+)/);
-  if (mTrace && mTrace[1]) {
-    var traceIp = mTrace[1].trim();
-    if (isValidIPv4(traceIp)) return traceIp;
-  }
-
-  // 2. 通用 IPv4 匹配
-  var m = s.match(/\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b/);
-  if (m && m[0]) {
-    // 排除探测目标服务器本身的 IP
-    if (m[0] !== "1.1.1.1" && m[0] !== "1.0.0.1" && m[0] !== "8.8.8.8" && m[0] !== "127.0.0.1" && m[0] !== "0.0.0.0") {
-      return m[0];
-    }
-  }
-  return "";
-}
-
-function sameC24(ip1, ip2) {
-  if (!ip1 || !ip2) return false;
-  var s1 = String(ip1).trim();
-  var s2 = String(ip2).trim();
-  var seg1 = s1.split(".");
-  var seg2 = s2.split(".");
-  if (seg1.length !== 4 || seg2.length !== 4) return false;
-  return seg1[0] === seg2[0] && seg1[1] === seg2[1] && seg1[2] === seg2[2];
-}
-
-function getCSubnet(ip) {
-  if (!ip) return "";
-  var seg = String(ip).trim().split(".");
-  if (seg.length !== 4) return ip;
-  return seg[0] + "." + seg[1] + "." + seg[2] + ".0/24";
-}
-
-function detectPublicIp() {
-  var probeUrls = [
-    "http://ip.3322.net",
-    "http://api-ipv4.ip.sb/ip",
-    "http://myip.ipip.net",
-    "https://1.1.1.1/cdn-cgi/trace"
-  ];
-  var probeTimeout = isLoon || isQX ? 4000 : 4;
-
-  function probeAt(idx) {
-    if (idx >= probeUrls.length) return Promise.resolve("");
-    var targetUrl = probeUrls[idx];
-    var opts = {
-      url: targetUrl,
-      headers: { "User-Agent": "curl/7.88.1" }
-    };
-    if (REQUEST_TIMEOUT !== null) {
-      opts.timeout = probeTimeout;
-    }
-    return httpRequestOnce("GET", opts)
-      .then(function (r) {
-        if (!r.error && r.body) {
-          var ip = extractIPv4(r.body);
-          if (ip) return ip;
-        }
-        return probeAt(idx + 1);
-      })
-      .catch(function () {
-        return probeAt(idx + 1);
-      });
-  }
-
-  return probeAt(0);
-}
-
 /* ---------- 槽位解析与轮换管理 ---------- */
 
 function parseSlotConfig(tokenStr, globalSlotArg) {
   var baseToken = tokenStr;
-  var slotMode = ""; // "" (默认自动轮换/未指定) | "fixed" | "rotate"
+  var slotMode = ""; // "" (默认未指定) | "fixed" | "rotate"
   var fixedSlot = 0;
   var rotateSlots = [0, 1, 2, 3, 4];
 
@@ -435,7 +373,7 @@ function parseSlotConfig(tokenStr, globalSlotArg) {
   };
 }
 
-function resolveActualToken(rawToken, index, globalSlotArg, isSubnetDrift) {
+function resolveActualToken(rawToken, index, globalSlotArg, shouldAdvanceRotate) {
   var cfg = parseSlotConfig(rawToken, globalSlotArg);
   var slotKey = STORE_PREFIX + "slot_active_" + index;
   var storedSlot = storeRead(slotKey);
@@ -454,7 +392,7 @@ function resolveActualToken(rawToken, index, globalSlotArg, isSubnetDrift) {
       var lastSlotNum = parseInt(storedSlot, 10);
       var pos = cfg.rotateSlots.indexOf(lastSlotNum);
       if (pos === -1) pos = 0;
-      if (isSubnetDrift) {
+      if (shouldAdvanceRotate) {
         pos = (pos + 1) % cfg.rotateSlots.length;
       }
       slotIdx = pos;
@@ -734,7 +672,6 @@ if (!isManualTap && currentSSID && argConfig.skip_wifi) {
     var skipTitle = "GGY 加白 · 🌐 Wi-Fi: " + currentSSID;
     var skipContent = "已处于家庭 Wi-Fi，软路由固定槽位已覆盖，跳过上报保留配额";
     finish(skipTitle, skipContent, true);
-    // 直接退出，不继续执行 runMain
   } else {
     runMain();
   }
@@ -774,136 +711,88 @@ function runMain() {
     return;
   }
 
-  // 探测公网出口 IP
-  detectPublicIp()
-    .then(function (currentIp) {
-      var lastIp = storeRead(STORE_PREFIX + "last_ip") || "";
-      var lastTs = parseInt(storeRead(STORE_PREFIX + "last_ts") || "0", 10);
-      var lastOk = storeRead(STORE_PREFIX + "last_ok") === "1";
-      var maxAgeMs = (parseInt(argConfig.interval, 10) || 10) * 60 * 1000;
+  var currentNet = getCurrentNetworkKey();
+  var lastNet = storeRead(STORE_PREFIX + "last_net") || "";
+  var netChanged = lastNet && currentNet !== lastNet;
+
+  // 轮换槽位推进：当网络环境改变时，自动推进到下一个轮换槽位
+  var tokenItems = tokens.map(function (t, i) {
+    return resolveActualToken(t, i, argConfig.slot, netChanged);
+  });
+
+  Promise.all([
+    Promise.all(
+      tokenItems.map(function (it, i) {
+        return ensureWhitelisted(it, i, argConfig.ua);
+      })
+    ),
+    fetchAllTraffic(tokenItems),
+  ])
+    .then(function (res) {
+      var results = res[0];
+      var trafficLines = res[1];
+
+      var okCount = 0;
+      var lines = [];
+      var changed = false;
+      var responseIp = "";
+
+      for (var i = 0; i < results.length; i++) {
+        var st = results[i].st;
+        if (st.applied) okCount++;
+        lines.push(describe(i, results[i]));
+
+        var state = (st.applied ? "1" : "0") + "|" + (st.msg || st.error || "");
+        if (storeRead(results[i].kvState) !== state) {
+          storeWrite(state, results[i].kvState);
+          changed = true;
+        }
+
+        // 若服务端返回了 IP，提取展示
+        if (!responseIp) {
+          var scanText = (st.msg || "") + " " + JSON.stringify(st.data || {});
+          var foundIp = extractIPv4(scanText);
+          if (foundIp) responseIp = foundIp;
+        }
+      }
+
+      var allOk = okCount === results.length;
       var now = Date.now();
-      var isMobileUa = (argConfig.ua || "mobile").toLowerCase() !== "pc";
 
-      var ipDrift =
-        lastIp &&
-        currentIp &&
-        (isMobileUa ? !sameC24(currentIp, lastIp) : currentIp !== lastIp);
+      if (allOk) {
+        storeWrite(currentNet, STORE_PREFIX + "last_net");
+        storeWrite(String(now), STORE_PREFIX + "last_ts");
+        storeWrite("1", STORE_PREFIX + "last_ok");
+        if (responseIp) storeWrite(responseIp, STORE_PREFIX + "last_ip");
 
-      // 将 rawToken 解析为槽位管理对象（根据是否漂移决定是否轮换至下一槽位）
-      var tokenItems = tokens.map(function (t, i) {
-        return resolveActualToken(t, i, argConfig.slot, ipDrift);
-      });
-
-      var canSkip = false;
-      var skipSubnet = "";
-
-      // 智能探活节流：在同一 /24 网段内且心跳未超时，跳过向咕咕云重复调用加白
-      if (!isManualTap && lastOk && currentIp && lastIp && now - lastTs < maxAgeMs) {
-        if (isMobileUa) {
-          if (sameC24(currentIp, lastIp)) {
-            canSkip = true;
-            skipSubnet = getCSubnet(currentIp);
+        tokenItems.forEach(function (it) {
+          if (it.slotMode === "rotate" && it.activeSlot !== null) {
+            storeWrite(String(it.activeSlot), it.slotKey);
           }
-        } else {
-          if (currentIp === lastIp) {
-            canSkip = true;
-            skipSubnet = currentIp + "/32";
-          }
-        }
-      }
-
-      if (canSkip) {
-        return fetchAllTraffic(tokenItems).then(function (trafficLines) {
-          var minsAgo = Math.max(0, Math.floor((now - lastTs) / 60000));
-          var title = "GGY 加白 · 放行中" + (onCellular() ? " 📶 移动网络" : " 🌐 Wi-Fi");
-          var content = "出口 IP: " + currentIp + "\n放行网段: " + skipSubnet + " (无需重报)";
-
-          // 槽位状态提示
-          var slotHints = tokenItems.map(function (it, idx) {
-            if (it.slotMode === "rotate") return (tokenItems.length > 1 ? "#" + (idx + 1) + " " : "") + "槽位: 轮换 @" + it.activeSlot + " (共 " + it.rotateSlots.length + " 槽)";
-            if (it.slotMode === "fixed") return (tokenItems.length > 1 ? "#" + (idx + 1) + " " : "") + "槽位: 固定 @" + it.activeSlot;
-            return "";
-          }).filter(function (s) { return !!s; });
-          if (slotHints.length > 0) {
-            content += "\n" + slotHints.join("\n");
-          }
-
-          var validTraffic = trafficLines.filter(function (s) { return !!s; });
-          if (validTraffic.length > 0) {
-            content += "\n" + validTraffic.join("\n");
-          }
-
-          content += "\n心跳保活: 持续有效 (" + (minsAgo === 0 ? "刚刚" : minsAgo + " 分钟前") + ")";
-          finish(title, content, true);
         });
+      } else {
+        storeWrite("0", STORE_PREFIX + "last_ok");
       }
 
-      // 越界自愈或保活上报：并行调用咕咕云加白 API 与流量查询
-      return Promise.all([
-        Promise.all(
-          tokenItems.map(function (it, i) {
-            return ensureWhitelisted(it, i, argConfig.ua);
-          })
-        ),
-        fetchAllTraffic(tokenItems),
-      ]).then(function (res) {
-        var results = res[0];
-        var trafficLines = res[1];
+      var title =
+        "GGY 加白 " + okCount + "/" + results.length + (onCellular() ? " 📶 移动网络" : " 🌐 Wi-Fi");
+      var content = lines.join("\n");
 
-        var okCount = 0;
-        var lines = [];
-        var changed = false;
+      var validTraffic = trafficLines.filter(function (s) { return !!s; });
+      if (validTraffic.length > 0) {
+        content += "\n" + validTraffic.join("\n");
+      }
 
-        for (var i = 0; i < results.length; i++) {
-          var st = results[i].st;
-          if (st.applied) okCount++;
-          lines.push(describe(i, results[i]));
+      if (responseIp) {
+        var isMobileUa = (argConfig.ua || "mobile").toLowerCase() !== "pc";
+        content += "\n出口 IP: " + responseIp + (isMobileUa ? " (" + getCSubnet(responseIp) + ")" : " (/32)");
+      }
 
-          var state = (st.applied ? "1" : "0") + "|" + (st.msg || st.error || "");
-          if (storeRead(results[i].kvState) !== state) {
-            storeWrite(state, results[i].kvState);
-            changed = true;
-          }
-        }
-
-        var allOk = okCount === results.length;
-        if (allOk) {
-          if (currentIp) storeWrite(currentIp, STORE_PREFIX + "last_ip");
-          storeWrite(String(now), STORE_PREFIX + "last_ts");
-          storeWrite("1", STORE_PREFIX + "last_ok");
-
-          tokenItems.forEach(function (it) {
-            if (it.slotMode === "rotate" && it.activeSlot !== null) {
-              storeWrite(String(it.activeSlot), it.slotKey);
-            }
-          });
-        } else {
-          storeWrite("0", STORE_PREFIX + "last_ok");
-        }
-
-        var title =
-          "GGY 加白 " + okCount + "/" + results.length + (onCellular() ? " 📶 移动网络" : " 🌐 Wi-Fi");
-        var content = lines.join("\n");
-
-        var validTraffic = trafficLines.filter(function (s) { return !!s; });
-        if (validTraffic.length > 0) {
-          content += "\n" + validTraffic.join("\n");
-        }
-
-        if (currentIp) {
-          content +=
-            "\n出口 IP: " +
-            currentIp +
-            (isMobileUa ? " (" + getCSubnet(currentIp) + ")" : " (/32)");
-        }
-
-        // 仅在首次、状态变化、网段漂移自愈、出现失败或手动点击时弹出系统通知
-        if (changed || ipDrift || !allOk || isManualTap) {
-          var notifyTitle = ipDrift ? "GGY 加白 · 网段自愈" : "GGY 防火墙加白";
-          notify(notifyTitle, title, content);
-        }
-        finish(title, content, allOk);
-      });
+      // 状态变化、出现失败或手动点击时弹出系统通知
+      if (changed || !allOk || isManualTap) {
+        notify("GGY 防火墙加白", title, content);
+      }
+      finish(title, content, allOk);
     })
     .catch(function (e) {
       notify("GGY 防火墙加白", "脚本异常", String(e && e.message ? e.message : e));

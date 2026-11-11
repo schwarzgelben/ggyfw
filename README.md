@@ -6,7 +6,7 @@
 
 - **防火墙加白**：`GET https://www.guguyun.com/cany_tencentecs/firewall/whitelist?token=<token>`
 - **流量查询**：`GET https://www.guguyun.com/cany_tencentecs/traffic/query?token=<token>`
-- **分流注意**：加白请求、流量查询与公网 IP 嗅探必须直连！已内置 `DIRECT` 分流规则，确保 API 识别的是本机当前真实公网出口 IP，而非代理节点 IP。
+- **分流注意**：加白请求与流量查询必须直连！已内置 `DIRECT` 分流规则，确保 API 识别的是本机当前真实公网出口 IP，而非代理节点 IP。
 
 ### 🎯 固定槽位与轮流写入机制 (`@0` ~ `@4` / `@rotate`)
 
@@ -45,17 +45,16 @@
 因此最佳配置推荐：
 1. **手机客户端（Surge 等）**：分配使用**【固定槽位链接】**（填 `token@rotate` 轮流写入，或 `token@0` 固定写入，默认手机 UA），直接放行当前基站整个 `/24` 网段。手机在同区域或同基站漂移时（最后一位跳变）完全不断流！
 2. **家庭软路由 / 电脑**：分配使用**【自动轮换链接】**（不加 `@`）。家庭宽带公网 IP 极为稳定，几天才变一次，`/32` 足够且不浪费固定槽位。
-3. **极速自愈与智能节流引擎**：
-   - 模块以 2 分钟为周期进行轻量出口探测（直连 3322 / ip.sb / ipip.net / Cloudflare，耗时仅 ~50ms，极省电省流量）。
-   - **同网段静默节流**：若探测到当前出口 IP 与上次加白属于同一个 `/24` 网段，且心跳在有效期内，**自动跳过咕咕云加白 API 请求**，零频次消耗、不弹干扰通知。
-   - **越界秒级自愈**：一旦手机跨区域切换基站跳出了原 `/24` 网段，脚本立刻主动向咕咕云发起加白并推送通知，无感自愈连接。
+3. **智能节流与保活机制**：
+   - 默认 10 分钟定时保活与 `network-changed` 网络变化即时上报，配合客户端面板随时查看实时流量与手动一键刷新。
+   - **网络漫游自动自愈**：手机在 Wi-Fi 与蜂窝数据切换或网络变更时立即触发加白，保持连接畅通。
    - **Wi-Fi 防占坑 (`skip_wifi`)**：连入家庭 Wi-Fi 时自动跳过上报，保护槽位配额。
 
 ## 平台总览
 
 | 平台 | 方案 | 触发方式 |
 |---|---|---|
-| iOS/Mac 代理客户端 | 本仓库脚本模块：Surge / Loon / Stash / QX / Shadowrocket / Egern | network-changed 即时 + 2分钟探活自愈 + 面板实时流量与刷新 |
+| iOS/Mac 代理客户端 | 本仓库脚本模块：Surge / Loon / Stash / QX / Shadowrocket / Egern | network-changed 即时 + 定时保活 + 面板实时流量与刷新 |
 | Linux / macOS | 本仓库 shell 脚本 | systemd timer / cron 每 10 分钟，支持 `./po0fw.sh traffic` |
 | OpenWrt / Kwrt 软路由 | 本仓库 shell 脚本 | cron + hotplug WAN 重连秒级触发 |
 | Windows | 本仓库 PowerShell | 计划任务：10 分钟 + 网络事件，支持流量与槽位参数 |
@@ -83,7 +82,7 @@
    - `slot`: （可选）若 tokens 未加 `@`，可在 slot 参数统一指定 `rotate` 或 `0`。
    - `skip_wifi`: （可选）填入你的家庭 Wi-Fi 名称（SSID，如 `MyHome-5G`），连入时跳过上报。
    - `ua`: （可选，默认 `mobile`）。
-3. 模块已内置 `DOMAIN,www.guguyun.com,DIRECT` 以及 IP 探活直连规则，开代理也能正确识别并加白本机出口。
+3. 模块已内置 `DOMAIN,www.guguyun.com,DIRECT` 直连分流规则，开代理也能正确识别并加白本机出口。
 
 ---
 

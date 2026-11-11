@@ -39,14 +39,8 @@ function makeSandbox(arg, trigger, network) {
               reset_time: "2026-12-01"
             }
           }));
-        } else if (opts.url.includes("1.1.1.1")) {
-          cb(null, { status: 200 }, "fl=123f45\nh=1.1.1.1\nip=117.136.32.15\nts=1710123456\n");
-        } else if (opts.url.includes("3322.net")) {
-          cb(null, { status: 200 }, "117.136.32.15\n");
-        } else if (opts.url.includes("ipip.net")) {
-          cb(null, { status: 200 }, "当前 IP：117.136.32.15 来自于：中国 广东 广州 移动");
         } else if (opts.url.includes("guguyun.com")) {
-          cb(null, { status: 200 }, JSON.stringify({ status: 200, msg: "添加成功", data: [] }));
+          cb(null, { status: 200 }, JSON.stringify({ status: 200, msg: "IP: 117.136.32.15 添加成功", data: [] }));
         } else {
           cb("not found", null, null);
         }
@@ -76,7 +70,7 @@ async function runTest(name, sandboxFn, verifyFn) {
 }
 
 async function main() {
-  console.log("Starting Comprehensive Logic Checks with Slot Adaptation & Traffic Query...\n");
+  console.log("Starting Test Suite for Restored Whitelist & Slot Logic...\n");
 
   // Test 1: Surge query string + First Run with Traffic Query & Fixed Slot @0
   await runTest("Fixed Slot @0 + Traffic Query", 
@@ -92,6 +86,7 @@ async function main() {
       }
       if (!doneResult.content.includes("📊 流量: 15.3G / 1000G")) throw new Error("Traffic line missing: " + doneResult.content);
       if (!doneResult.content.includes("@0")) throw new Error("Slot @0 missing in describe: " + doneResult.content);
+      if (!doneResult.content.includes("117.136.32.15")) throw new Error("Response IP missing in content: " + doneResult.content);
     }
   );
 
@@ -99,7 +94,6 @@ async function main() {
   await runTest("Slot Rotation Mode (@rotate across 0..4)",
     () => makeSandbox("tokens=tok_rot@rotate&ua=mobile"),
     (sb) => {
-      // First run should use slot 0
       if (!httpCalls.some(u => u.includes("token=tok_rot%400") || u.includes("token=tok_rot@0"))) {
         throw new Error("Whitelist API should use slot @0 on initial run: " + JSON.stringify(httpCalls));
       }
@@ -109,32 +103,21 @@ async function main() {
     }
   );
 
-  // Test 3: Rotation Slot Pointer Persistence (Drift to next subnet uses slot 1)
-  await runTest("Slot Rotation Advances on Subnet Drift",
+  // Test 3: Rotation Slot Pointer Persistence (Drift to next network uses slot 1)
+  await runTest("Slot Rotation Advances on Network Change",
     () => {
       const sb = makeSandbox("tokens=tok_rot@rotate&ua=mobile");
       store["ggy_fw_slot_active_0"] = "0";
-      store["ggy_fw_last_ip"] = "117.136.32.15";
-      store["ggy_fw_last_ts"] = String(Date.now() - 2 * 60 * 1000);
-      store["ggy_fw_last_ok"] = "1";
-      sb.$httpClient.get = (opts, cb) => {
-        httpCalls.push(opts.url);
-        if (opts.url.includes("traffic/query")) {
-          cb(null, { status: 200 }, JSON.stringify({ status: 200, msg: "ok", data: { used: "20G", total: "1000G" } }));
-        } else if (opts.url.includes("3322.net")) {
-          cb(null, { status: 200 }, "117.136.88.99\n"); // new subnet!
-        } else if (opts.url.includes("guguyun.com")) {
-          cb(null, { status: 200 }, JSON.stringify({ status: 200, msg: "添加成功", data: [] }));
-        }
-      };
+      store["ggy_fw_last_net"] = "wifi:CoffeeShop";
+      // Current network is pdp_ip0 (cellular)
       return sb;
     },
     (sb) => {
       if (!httpCalls.some(u => u.includes("token=tok_rot%401") || u.includes("token=tok_rot@1"))) {
-        throw new Error("Whitelist API should use slot @1 on second drift: " + JSON.stringify(httpCalls));
+        throw new Error("Whitelist API should advance to slot @1 on network change: " + JSON.stringify(httpCalls));
       }
       if (store["ggy_fw_slot_active_0"] !== "1") {
-        throw new Error("Slot active should be 1 after drift, got: " + store["ggy_fw_slot_active_0"]);
+        throw new Error("Slot active should be 1 after network change, got: " + store["ggy_fw_slot_active_0"]);
       }
     }
   );
@@ -159,65 +142,27 @@ async function main() {
     }
   );
 
-  // Test 6: Cloudflare trace anti-poisoning (must NOT extract 1.1.1.1 from h=1.1.1.1)
-  await runTest("Cloudflare Trace Anti-Poisoning Check",
-    () => {
-      const sb = makeSandbox("tokens=test_cf");
-      sb.$httpClient.get = (opts, cb) => {
-        httpCalls.push(opts.url);
-        if (opts.url.includes("1.1.1.1")) {
-          cb(null, { status: 200 }, "fl=123f45\nh=1.1.1.1\nip=117.136.55.66\nts=1710123456\n");
-        } else if (opts.url.includes("guguyun.com")) {
-          cb(null, { status: 200 }, JSON.stringify({ status: 200, msg: "添加成功", data: [] }));
-        } else {
-          cb("fail", null, null);
-        }
-      };
-      return sb;
-    },
+  // Test 6: Skip Wi-Fi in Background
+  await runTest("Skip Wi-Fi in Background",
+    () => makeSandbox("tokens=tok1&skip_wifi=HomeWiFi", undefined, { wifi: { ssid: "HomeWiFi" } }),
     (sb) => {
-      if (store["ggy_fw_last_ip"] !== "117.136.55.66") {
-        throw new Error("Extracted wrong IP (likely 1.1.1.1): " + store["ggy_fw_last_ip"]);
+      if (httpCalls.length > 0) throw new Error("Should make 0 HTTP calls on skip_wifi");
+      if (!doneResult.content.includes("已处于家庭 Wi-Fi")) throw new Error("Content mismatch: " + JSON.stringify(doneResult));
+    }
+  );
+
+  // Test 7: Direct Whitelist Call does NOT probe 3322 / ip.sb / 1.1.1.1
+  await runTest("No External IP Sniffing (No 3322 / ip.sb / 1.1.1.1)",
+    () => makeSandbox("tokens=tok_clean"),
+    (sb) => {
+      const externalProbes = httpCalls.filter(u => u.includes("3322") || u.includes("ip.sb") || u.includes("1.1.1.1") || u.includes("ipip.net"));
+      if (externalProbes.length > 0) {
+        throw new Error("Found unwanted external IP sniffing calls: " + JSON.stringify(externalProbes));
       }
     }
   );
 
-  // Test 7: Same C24 subnet throttling (IP 117.136.32.88 vs 117.136.32.15)
-  await runTest("Same C24 Subnet Throttling",
-    () => {
-      const sb = makeSandbox("tokens=tok1@0");
-      store["ggy_fw_last_ip"] = "117.136.32.15";
-      store["ggy_fw_last_ts"] = String(Date.now() - 2 * 60 * 1000);
-      store["ggy_fw_last_ok"] = "1";
-      store["ggy_fw_traffic_0"] = "📊 流量: 15.3G / 1000G (1.5%) · 12-01 重置";
-      store["ggy_fw_traffic_ts_0"] = String(Date.now() - 60 * 1000);
-      sb.$httpClient.get = (opts, cb) => {
-        httpCalls.push(opts.url);
-        if (opts.url.includes("3322.net")) {
-          cb(null, { status: 200 }, "117.136.32.88\n"); // same /24
-        } else if (opts.url.includes("guguyun.com")) {
-          cb(null, { status: 200 }, JSON.stringify({ status: 200, msg: "添加成功", data: [] }));
-        }
-      };
-      return sb;
-    },
-    (sb) => {
-      if (httpCalls.some(u => u.includes("firewall/whitelist"))) throw new Error("GGY whitelist API should NOT be called on same C24");
-      if (!doneResult.title.includes("放行中")) throw new Error("Title should indicate active pass: " + doneResult.title);
-      if (!doneResult.content.includes("槽位: 固定 @0")) throw new Error("Slot info missing in panel: " + doneResult.content);
-    }
-  );
-
-  // Test 8: Skip Wi-Fi in Background Cron
-  await runTest("Skip Wi-Fi in Background Cron",
-    () => makeSandbox("tokens=tok1&skip_wifi=HomeWiFi", undefined, { wifi: { ssid: "HomeWiFi" } }),
-    (sb) => {
-      if (httpCalls.length > 0) throw new Error("Should make 0 HTTP calls on skip_wifi");
-      if (!doneResult.content.includes("已处于家庭 Wi-Fi")) throw new Error("Content mismatch");
-    }
-  );
-
-  console.log("\n🎉 ALL TESTS WITH SLOT ADAPTATION & ROTATION PASSED WITH 100% SUCCESS!");
+  console.log("\n🎉 ALL TESTS PASSED SUCCESSFULLY!");
 }
 
 main().catch(err => {

@@ -14,7 +14,7 @@ http:
 
 script-providers:
   ggy-fw:
-    url: https://raw.githubusercontent.com/w0ven/po0fw/main/scripts/po0-firewall-whitelist.js
+    url: https://raw.githubusercontent.com/schwarzgelben/ggyfw/main/scripts/po0-firewall-whitelist.js
     interval: 86400
 
 cron:

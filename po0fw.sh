@@ -1,6 +1,6 @@
 #!/bin/sh
 # po0fw - GGY (咕咕云) 防火墙自动加白（PC / 软路由 / Termux 通用版）
-# https://github.com/w0ven/po0fw
+# https://github.com/schwarzgelben/ggyfw
 #
 # 用法:
 #   PO0FW_TOKENS="你的token或完整链接" ./po0fw.sh          # 环境变量方式

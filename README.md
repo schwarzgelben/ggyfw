@@ -36,7 +36,7 @@
 
 1. 在 Surge 中安装模块：
    ```text
-   https://raw.githubusercontent.com/w0ven/po0fw/main/surge/po0-firewall-whitelist.sgmodule
+   https://raw.githubusercontent.com/schwarzgelben/ggyfw/main/surge/po0-firewall-whitelist.sgmodule
    ```
 2. 在模块参数设置中，将 `tokens` 填入你的咕咕云 token 或完整分享链接（多台机器用英文逗号分割）。
 3. 模块已内置 `DOMAIN,www.guguyun.com,DIRECT` 规则，开代理也能正确加白本机出口。
@@ -48,13 +48,13 @@
 ### Linux / macOS / 安卓 Termux
 
 ```sh
-curl -sSL https://raw.githubusercontent.com/w0ven/po0fw/main/install-linux.sh | PO0FW_TOKENS="你的token或分享链接" sh
+curl -sSL https://raw.githubusercontent.com/schwarzgelben/ggyfw/main/install-linux.sh | PO0FW_TOKENS="你的token或分享链接" sh
 ```
 
 ### OpenWrt / Kwrt 软路由
 
 ```sh
-curl -sSL https://raw.githubusercontent.com/w0ven/po0fw/main/openwrt/install-openwrt.sh -o /tmp/i.sh
+curl -sSL https://raw.githubusercontent.com/schwarzgelben/ggyfw/main/openwrt/install-openwrt.sh -o /tmp/i.sh
 PO0FW_TOKENS="你的token或分享链接" sh /tmp/i.sh
 ```
 
@@ -63,7 +63,7 @@ PO0FW_TOKENS="你的token或分享链接" sh /tmp/i.sh
 管理员 PowerShell：
 
 ```powershell
-irm https://raw.githubusercontent.com/w0ven/po0fw/main/windows/install-windows.ps1 -OutFile i.ps1
+irm https://raw.githubusercontent.com/schwarzgelben/ggyfw/main/windows/install-windows.ps1 -OutFile i.ps1
 powershell -ExecutionPolicy Bypass -File i.ps1 -Tokens "你的token或分享链接"
 ```
 

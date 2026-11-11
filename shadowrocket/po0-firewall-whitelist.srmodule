@@ -1,12 +1,13 @@
 #!name=GGY 咕咕云防火墙自动加白
 #!desc=安装后：配置 → 模块 → 长按本模块 → 编辑纯文本，把下方两行 argument=tokens= 后面的占位替换成你的咕咕云 token 或完整分享链接（多台机器用 | 分割）。
 #!author=reallinzc
-#!homepage=https://github.com/w0ven/po0fw
+#!homepage=https://github.com/schwarzgelben/ggyfw
 
 [Rule]
 DOMAIN,www.guguyun.com,DIRECT
 
 [Script]
-ggy-fw-cron = type=cron,cronexpr="*/10 * * * *",script-path=https://raw.githubusercontent.com/w0ven/po0fw/main/scripts/po0-firewall-whitelist.js?v=3,timeout=60,argument=tokens=在此填入token
-ggy-fw-event = type=event,event-name=network-changed,script-path=https://raw.githubusercontent.com/w0ven/po0fw/main/scripts/po0-firewall-whitelist.js?v=3,timeout=60,argument=tokens=在此填入token
+ggy-fw-cron = type=cron,cronexpr="*/10 * * * *",script-path=https://raw.githubusercontent.com/schwarzgelben/ggyfw/main/scripts/po0-firewall-whitelist.js?v=3,timeout=60,argument=tokens=在此填入token
+ggy-fw-event = type=event,event-name=network-changed,script-path=https://raw.githubusercontent.com/schwarzgelben/ggyfw/main/scripts/po0-firewall-whitelist.js?v=3,timeout=60,argument=tokens=在此填入token
+
 

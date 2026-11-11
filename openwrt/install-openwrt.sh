@@ -11,7 +11,7 @@ if [ -z "$TOKENS" ]; then
 fi
 
 
-RAW_BASE="${PO0FW_RAW:-https://raw.githubusercontent.com/w0ven/po0fw/main}"
+RAW_BASE="${PO0FW_RAW:-https://raw.githubusercontent.com/schwarzgelben/ggyfw/main}"
 
 echo "[1/4] 下载主脚本 -> /usr/bin/po0fw"
 if [ -f "$(dirname "$0")/../po0fw.sh" ]; then

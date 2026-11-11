@@ -40,6 +40,6 @@ GET https://www.guguyun.com/cany_tencentecs/firewall/whitelist?token=你的token
 
 ```sh
 pkg install -y curl
-curl -sSL https://raw.githubusercontent.com/w0ven/po0fw/main/install-linux.sh | PO0FW_TOKENS="你的token或分享链接" sh
+curl -sSL https://raw.githubusercontent.com/schwarzgelben/ggyfw/main/install-linux.sh | PO0FW_TOKENS="你的token或分享链接" sh
 sv-enable crond
 ```

@@ -11,7 +11,7 @@ if [ -z "$TOKENS" ]; then
 fi
 
 
-RAW_BASE="${PO0FW_RAW:-https://raw.githubusercontent.com/w0ven/po0fw/main}"
+RAW_BASE="${PO0FW_RAW:-https://raw.githubusercontent.com/schwarzgelben/ggyfw/main}"
 
 # Termux 没有 /usr/bin 写权限，用 $PREFIX
 if [ -n "${TERMUX_VERSION:-}" ] || [ -d "/data/data/com.termux" ]; then

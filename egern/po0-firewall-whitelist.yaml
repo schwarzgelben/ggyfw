@@ -5,6 +5,7 @@ homepage: https://github.com/schwarzgelben/ggyfw
 
 compat_arguments:
   tokens: ""
+  traffic_tokens: ""
   skip_wifi: ""
   ua: "mobile"
   slot: ""
@@ -18,19 +19,21 @@ scriptings:
   - schedule:
       name: ggy-fw-cron
       cron: "*/10 * * * *"
-      script_url: https://raw.githubusercontent.com/schwarzgelben/ggyfw/main/egern/po0-firewall-whitelist.js?v=20261111b
+      script_url: https://raw.githubusercontent.com/schwarzgelben/ggyfw/main/egern/po0-firewall-whitelist.js?v=20261111c
       timeout: 60
       env:
         tokens: "{{{tokens}}}"
+        traffic_tokens: "{{{traffic_tokens}}}"
         skip_wifi: "{{{skip_wifi}}}"
         ua: "{{{ua}}}"
         slot: "{{{slot}}}"
   - network:
       name: ggy-fw-network
-      script_url: https://raw.githubusercontent.com/schwarzgelben/ggyfw/main/egern/po0-firewall-whitelist.js?v=20261111b
+      script_url: https://raw.githubusercontent.com/schwarzgelben/ggyfw/main/egern/po0-firewall-whitelist.js?v=20261111c
       timeout: 60
       env:
         tokens: "{{{tokens}}}"
+        traffic_tokens: "{{{traffic_tokens}}}"
         skip_wifi: "{{{skip_wifi}}}"
         ua: "{{{ua}}}"
         slot: "{{{slot}}}"

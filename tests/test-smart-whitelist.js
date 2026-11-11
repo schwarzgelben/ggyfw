@@ -181,6 +181,19 @@ async function main() {
     }
   );
 
+  // Test 9: Independent traffic_tokens argument overrides traffic query target
+  await runTest("Explicit traffic_tokens override",
+    () => makeSandbox("tokens=tok_wl@0&traffic_tokens=tok_tf&slot=0&from=panel"),
+    (sb) => {
+      if (!httpCalls.some(u => u.includes("firewall/whitelist?token=tok_wl%400"))) {
+        throw new Error("Whitelist should use tok_wl@0: " + JSON.stringify(httpCalls));
+      }
+      if (!httpCalls.some(u => u.includes("traffic/query?token=tok_tf"))) {
+        throw new Error("Traffic query should use tok_tf: " + JSON.stringify(httpCalls));
+      }
+    }
+  );
+
   console.log("\n🎉 ALL TESTS PASSED SUCCESSFULLY!");
 }
 

@@ -13,13 +13,30 @@ const API_BASE = "https://www.guguyun.com/cany_tencentecs/firewall/whitelist?tok
 const TRAFFIC_API_BASE = "https://www.guguyun.com/cany_tencentecs/traffic/query?token=";
 const STORE_PREFIX = "ggy_fw_";
 
+function safeDecode(s) {
+  if (!s) return "";
+  try {
+    return decodeURIComponent(s);
+  } catch (e) {
+    return s;
+  }
+}
+
 function extractToken(raw) {
   if (!raw) return "";
-  const s = String(raw).trim();
-  const m = s.match(/[?&]token=([^&#\s]+)/);
-  if (m && m[1]) return decodeURIComponent(m[1]);
+  let s = String(raw).trim();
+  if (s.includes("%")) s = safeDecode(s);
+  const m = s.match(/(?:[?&]token=|^token=)([^&#\s]+)/i);
+  if (m && m[1]) return safeDecode(m[1]).trim();
   if (/^https?:\/\//i.test(s)) return "";
-  return s;
+  return s.trim();
+}
+
+function cleanTrafficToken(raw) {
+  if (!raw) return "";
+  let tok = extractToken(raw);
+  tok = String(tok).replace(/(?:@|%40).*$/i, "").replace(/^token=/i, "").trim();
+  return tok;
 }
 
 function parseTokens(raw) {
@@ -362,6 +379,18 @@ function parseTrafficData(data) {
   return { line, used: usedStr, total: totalStr, rest: restStr, reset: rawReset };
 }
 
+function isTrafficError(text) {
+  if (!text) return true;
+  return (
+    text.includes("失败") ||
+    text.includes("异常") ||
+    text.includes("不可用") ||
+    text.includes("超时") ||
+    text.includes("错误") ||
+    text.includes("未配置")
+  );
+}
+
 async function queryTraffic(ctx, baseToken, index, multi) {
   const kvKey = STORE_PREFIX + "traffic_" + index;
   const kvTsKey = STORE_PREFIX + "traffic_ts_" + index;
@@ -370,22 +399,39 @@ async function queryTraffic(ctx, baseToken, index, multi) {
   const now = Date.now();
   const CACHE_TTL = 5 * 60 * 1000;
 
-  if (cached && now - cachedTs < CACHE_TTL && !cached.includes("失败") && !cached.includes("异常")) {
+  if (cached && now - cachedTs < CACHE_TTL && !isTrafficError(cached)) {
     return cached;
   }
 
-  const url = TRAFFIC_API_BASE + encodeURIComponent(baseToken);
+  const pureToken = cleanTrafficToken(baseToken);
+  if (!pureToken) {
+    return cached && !isTrafficError(cached) ? cached : "📊 流量: 未找到有效 Token";
+  }
+
+  const url = TRAFFIC_API_BASE + encodeURIComponent(pureToken);
+  const headers = {
+    "User-Agent":
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    Accept: "application/json, text/plain, */*",
+    "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+  };
+
   try {
-    const r = await httpGetOnce(ctx, url, {
-      "User-Agent":
-        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
-      Accept: "application/json, text/plain, */*",
-    });
-    if (r.netError) return cached || `📊 流量: 查询超时 (${r.netError})`;
+    let r = await httpGetOnce(ctx, url, headers);
+    if (r.netError || (r.status && r.status !== 200)) {
+      await sleep(1500);
+      r = await httpGetOnce(ctx, url, headers);
+    }
+
+    if (r.netError) {
+      if (cached && !isTrafficError(cached)) return cached;
+      return `📊 流量: 查询超时 (${r.netError})`;
+    }
     let data = null;
     let apiMsg = "";
+    let j = null;
     try {
-      const j = JSON.parse(r.text);
+      j = JSON.parse(r.text);
       if (j) {
         apiMsg = j.msg || "";
         if ((j.status === 200 || j.code === 200) && j.data) {
@@ -393,10 +439,14 @@ async function queryTraffic(ctx, baseToken, index, multi) {
         }
       }
     } catch (e) {
-      return cached || `📊 流量: 响应解析失败 (${String(r.text).slice(0, 30)})`;
+      if (cached && !isTrafficError(cached)) return cached;
+      return `📊 流量: 响应解析失败 (${String(r.text).slice(0, 30)})`;
     }
 
-    if (!data) return cached || `📊 流量: ${apiMsg || "无数据"}`;
+    if (!data) {
+      if (cached && !isTrafficError(cached)) return cached;
+      return `📊 流量: ${apiMsg || "无数据"}`;
+    }
     const parsed = parseTrafficData(data);
     if (parsed && parsed.line) {
       const prefix = multi ? `📊 #${index + 1} ` : "📊 ";
@@ -406,9 +456,11 @@ async function queryTraffic(ctx, baseToken, index, multi) {
       return line;
     }
   } catch (e) {
-    return cached || `📊 流量: 请求异常 (${(e && e.message) || e})`;
+    if (cached && !isTrafficError(cached)) return cached;
+    return `📊 流量: 请求异常 (${(e && e.message) || e})`;
   }
-  return cached || "📊 流量: 数据为空";
+  if (cached && !isTrafficError(cached)) return cached;
+  return "📊 流量: 数据为空";
 }
 
 async function apiCall(ctx, actualToken, uaMode) {
@@ -476,12 +528,21 @@ export default async function (ctx) {
   }
 
   const globalSlot = (ctx.env && ctx.env.slot) || "";
+  const trafficTokensArg = (ctx.env && (ctx.env.traffic_tokens || ctx.env.traffic_token)) || "";
   const uaMode = (ctx.env && ctx.env.ua) || "mobile";
   const currentNet = getCurrentNetworkKey(ctx);
   const lastNet = ctx.storage.get(STORE_PREFIX + "last_net") || "";
   const netChanged = lastNet && currentNet !== lastNet;
 
   const tokenItems = tokens.map((t, i) => resolveActualToken(ctx, t, i, globalSlot, netChanged));
+
+  let trafficTokens = [];
+  if (trafficTokensArg) {
+    trafficTokens = String(trafficTokensArg)
+      .split(/[,|;、\r\n\s]+/)
+      .map(cleanTrafficToken)
+      .filter(s => s.length > 0);
+  }
 
   const cellular = onCellular(ctx);
   const results = [];
@@ -492,7 +553,8 @@ export default async function (ctx) {
       ? { applied: true, msg: "家庭 Wi-Fi (跳过加白防占坑)" }
       : await apiCall(ctx, item.actualToken, uaMode);
     results.push({ item: item, st: st, kvState: STORE_PREFIX + i });
-    const traf = await queryTraffic(ctx, item.baseToken, i, tokenItems.length > 1);
+    const targetTrafficTok = trafficTokens[i] || item.baseToken;
+    const traf = await queryTraffic(ctx, targetTrafficTok, i, tokenItems.length > 1);
     if (traf) trafficLines.push(traf);
   }
 

@@ -145,32 +145,61 @@ function httpRequest(method, opts, attempt) {
   });
 }
 
+function safeDecode(s) {
+  if (!s) return "";
+  try {
+    return decodeURIComponent(s);
+  } catch (e) {
+    return s;
+  }
+}
+
 function extractToken(raw) {
   if (!raw) return "";
   var s = String(raw).trim();
-  var m = s.match(/[?&]token=([^&#\s]+)/);
-  if (m && m[1]) return decodeURIComponent(m[1]);
+  if (s.indexOf("%") !== -1) s = safeDecode(s);
+  var m = s.match(/(?:[?&]token=|^token=)([^&#\s]+)/i);
+  if (m && m[1]) return safeDecode(m[1]).trim();
   if (/^https?:\/\//i.test(s)) return "";
-  return s;
+  return s.trim();
+}
+
+function cleanTrafficToken(raw) {
+  if (!raw) return "";
+  var tok = extractToken(raw);
+  tok = String(tok).replace(/(?:@|%40).*$/i, "").replace(/^token=/i, "").trim();
+  return tok;
 }
 
 function parseArgument() {
-  var res = { tokens: "", skip_wifi: "", ua: "mobile", interval: "10", force: "0", slot: "", from: "" };
+  var res = {
+    tokens: "",
+    traffic_tokens: "",
+    skip_wifi: "",
+    ua: "mobile",
+    interval: "10",
+    force: "0",
+    slot: "",
+    from: "",
+  };
   if (typeof $argument === "undefined" || $argument === null) return res;
 
-  // 1. Loon 数组对象传参: [tokens, skip_wifi, ua, slot, interval]
+  // 1. Loon 数组对象传参: [tokens, skip_wifi, ua, slot, interval, traffic_tokens]
   if (Array.isArray($argument)) {
     if ($argument[0] !== undefined) res.tokens = String($argument[0]);
     if ($argument[1] !== undefined) res.skip_wifi = String($argument[1]);
     if ($argument[2] !== undefined) res.ua = String($argument[2]);
     if ($argument[3] !== undefined) res.slot = String($argument[3]);
     if ($argument[4] !== undefined) res.interval = String($argument[4]);
+    if ($argument[5] !== undefined) res.traffic_tokens = String($argument[5]);
     return res;
   }
 
   // 2. 普通 Object
   if (typeof $argument === "object") {
     if ($argument.tokens !== undefined) res.tokens = String($argument.tokens);
+    if ($argument.traffic_tokens !== undefined) res.traffic_tokens = String($argument.traffic_tokens);
+    if ($argument.traffic_token !== undefined) res.traffic_tokens = String($argument.traffic_token);
     if ($argument.skip_wifi !== undefined) res.skip_wifi = String($argument.skip_wifi);
     if ($argument.ua !== undefined) res.ua = String($argument.ua);
     if ($argument.interval !== undefined) res.interval = String($argument.interval);
@@ -189,6 +218,8 @@ function parseArgument() {
       var p = JSON.parse(raw);
       if (p) {
         if (p.tokens !== undefined) res.tokens = String(p.tokens);
+        if (p.traffic_tokens !== undefined) res.traffic_tokens = String(p.traffic_tokens);
+        if (p.traffic_token !== undefined) res.traffic_tokens = String(p.traffic_token);
         if (p.skip_wifi !== undefined) res.skip_wifi = String(p.skip_wifi);
         if (p.ua !== undefined) res.ua = String(p.ua);
         if (p.interval !== undefined) res.interval = String(p.interval);
@@ -210,6 +241,7 @@ function parseArgument() {
         if (arr[2] !== undefined) res.ua = String(arr[2]);
         if (arr[3] !== undefined) res.slot = String(arr[3]);
         if (arr[4] !== undefined) res.interval = String(arr[4]);
+        if (arr[5] !== undefined) res.traffic_tokens = String(arr[5]);
         return res;
       }
     } catch (e) {
@@ -220,6 +252,7 @@ function parseArgument() {
       if (parts[2] !== undefined) res.ua = parts[2].trim();
       if (parts[3] !== undefined) res.slot = parts[3].trim();
       if (parts[4] !== undefined) res.interval = parts[4].trim();
+      if (parts[5] !== undefined) res.traffic_tokens = parts[5].trim();
       return res;
     }
   }
@@ -232,8 +265,9 @@ function parseArgument() {
       var eqIdx = pairs[i].indexOf("=");
       if (eqIdx !== -1) {
         var k = pairs[i].slice(0, eqIdx).trim();
-        var v = decodeURIComponent(pairs[i].slice(eqIdx + 1).trim());
+        var v = safeDecode(pairs[i].slice(eqIdx + 1).trim());
         if (k === "tokens") { res.tokens = v; foundKey = true; }
+        else if (k === "traffic_tokens" || k === "traffic_token") { res.traffic_tokens = v; foundKey = true; }
         else if (k === "skip_wifi") { res.skip_wifi = v; foundKey = true; }
         else if (k === "ua") { res.ua = v || res.ua; foundKey = true; }
         else if (k === "interval") { res.interval = v || res.interval; foundKey = true; }
@@ -577,6 +611,18 @@ function parseTrafficData(data) {
   return { line: line, used: usedStr, total: totalStr, rest: restStr, reset: rawReset };
 }
 
+function isTrafficError(text) {
+  if (!text) return true;
+  return (
+    text.indexOf("失败") !== -1 ||
+    text.indexOf("异常") !== -1 ||
+    text.indexOf("不可用") !== -1 ||
+    text.indexOf("超时") !== -1 ||
+    text.indexOf("错误") !== -1 ||
+    text.indexOf("未配置") !== -1
+  );
+}
+
 function queryTraffic(baseToken, index, multi) {
   var kvKey = STORE_PREFIX + "traffic_" + index;
   var kvTsKey = STORE_PREFIX + "traffic_ts_" + index;
@@ -587,31 +633,53 @@ function queryTraffic(baseToken, index, multi) {
   var CACHE_TTL = 5 * 60 * 1000; // 缓存 5 分钟
 
   // 命中非强制刷新缓存且缓存不是错误信息
-  if (!isManualTap && cached && now - cachedTs < CACHE_TTL && cached.indexOf("失败") === -1 && cached.indexOf("异常") === -1) {
+  if (!isManualTap && cached && now - cachedTs < CACHE_TTL && !isTrafficError(cached)) {
     return Promise.resolve(cached);
   }
 
-  // 流量查询接口必须使用纯净 baseToken（不含 @0~4 后缀）
-  var url = TRAFFIC_API_BASE + encodeURIComponent(baseToken);
+  // 流量查询接口必须使用纯净 baseToken（不含 @0~4 或 %40 等后缀）
+  var pureToken = cleanTrafficToken(baseToken);
+  if (!pureToken) {
+    return Promise.resolve(cached && !isTrafficError(cached) ? cached : "📊 流量: 未找到有效 Token");
+  }
+
+  var url = TRAFFIC_API_BASE + encodeURIComponent(pureToken);
   var opts = {
     url: url,
     headers: {
       "User-Agent":
-        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
       Accept: "application/json, text/plain, */*",
+      "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
     },
   };
   if (REQUEST_TIMEOUT !== null) opts.timeout = REQUEST_TIMEOUT;
 
-  return httpRequest("GET", opts)
+  function doFetch(attempt) {
+    attempt = attempt || 1;
+    return httpRequestOnce("GET", opts).then(function (r) {
+      if (r.error || (r.status && r.status !== 200)) {
+        if (attempt < 2) {
+          return delay(1500).then(function () {
+            return doFetch(attempt + 1);
+          });
+        }
+      }
+      return r;
+    });
+  }
+
+  return doFetch(1)
     .then(function (r) {
       if (r.error) {
-        return cached || ("📊 流量: 查询超时/网络错误 (" + r.error + ")");
+        if (cached && !isTrafficError(cached)) return cached;
+        return "📊 流量: 查询超时/网络错误 (" + r.error + ")";
       }
       var data = null;
       var apiMsg = "";
+      var j = null;
       try {
-        var j = JSON.parse(r.body);
+        j = JSON.parse(r.body);
         if (j) {
           apiMsg = j.msg || "";
           if ((j.status === 200 || j.code === 200) && j.data) {
@@ -619,11 +687,16 @@ function queryTraffic(baseToken, index, multi) {
           }
         }
       } catch (e) {
-        return cached || ("📊 流量: 响应解析失败 (" + String(r.body).slice(0, 30) + ")");
+        if (cached && !isTrafficError(cached)) return cached;
+        return "📊 流量: 响应解析失败 (" + String(r.body).slice(0, 30) + ")";
       }
 
       if (!data) {
-        return cached || ("📊 流量: " + (apiMsg || ("接口状态 " + (j ? j.status : "异常"))));
+        // 如果之前有成功的流量缓存，发生后端限频/暂不可用等瞬时异常时，保留上次有效展示
+        if (cached && !isTrafficError(cached)) {
+          return cached;
+        }
+        return "📊 流量: " + (apiMsg || ("接口状态 " + (j ? j.status : "异常")));
       }
 
       var parsed = parseTrafficData(data);
@@ -634,17 +707,28 @@ function queryTraffic(baseToken, index, multi) {
         storeWrite(String(now), kvTsKey);
         return line;
       }
-      return cached || "📊 流量: 数据为空";
+      if (cached && !isTrafficError(cached)) return cached;
+      return "📊 流量: 数据为空";
     })
     .catch(function (err) {
-      return cached || ("📊 流量: 请求异常 (" + describeHttpError(err) + ")");
+      if (cached && !isTrafficError(cached)) return cached;
+      return "📊 流量: 请求异常 (" + describeHttpError(err) + ")";
     });
 }
 
-function fetchAllTraffic(tokenItems) {
+function fetchAllTraffic(tokenItems, trafficTokensArg) {
+  var trafficTokens = [];
+  if (trafficTokensArg) {
+    trafficTokens = String(trafficTokensArg)
+      .split(/[,|;、\r\n\s]+/)
+      .map(cleanTrafficToken)
+      .filter(function (s) { return s.length > 0; });
+  }
+
   return Promise.all(
     tokenItems.map(function (item, i) {
-      return queryTraffic(item.baseToken, i, tokenItems.length > 1);
+      var tok = (trafficTokens[i] || item.baseToken);
+      return queryTraffic(tok, i, tokenItems.length > 1);
     })
   );
 }
@@ -821,7 +905,7 @@ function runMain(skipWhitelist) {
         })
       );
 
-  Promise.all([whitelistPromise, fetchAllTraffic(tokenItems)])
+  Promise.all([whitelistPromise, fetchAllTraffic(tokenItems, argConfig.traffic_tokens)])
     .then(function (res) {
       var results = res[0];
       var trafficLines = res[1];

@@ -6,6 +6,7 @@
 
 [Argument]
 tokens = input,"",tag=API tokens,desc=咕咕云防火墙白名单 token 或完整分享链接；多台机器用英文逗号分割。支持末尾加 @0~4（如 token@0 固定槽位 0，token@rotate 轮流写入 0~4 槽）
+traffic_tokens = input,"",tag=独立流量查询token,desc=可选，若流量查询 token 与白名单不同在此填写，相同则留空
 skip_wifi = input,"",tag=信任家庭 Wi-Fi,desc=可选，填入家庭 Wi-Fi 名称（SSID，多个逗号分割），连入时自动跳过上报以保留轮换槽位配额
 ua = select,"mobile","mobile","pc",tag=UA 模拟模式,desc=mobile 模拟手机放行 /24 网段，pc 放行 /32
 slot = input,"",tag=槽位管理,desc=可选，0~4（固定写入对应槽位），或 rotate（轮流写入 0~4 槽）
@@ -14,5 +15,5 @@ slot = input,"",tag=槽位管理,desc=可选，0~4（固定写入对应槽位）
 DOMAIN,www.guguyun.com,DIRECT
 
 [Script]
-cron "*/10 * * * *" script-path=https://raw.githubusercontent.com/schwarzgelben/ggyfw/main/scripts/po0-firewall-whitelist.js?v=20261111b, timeout=60, tag=ggy-fw-cron, argument=[{tokens},{skip_wifi},{ua},{slot}]
-network-changed script-path=https://raw.githubusercontent.com/schwarzgelben/ggyfw/main/scripts/po0-firewall-whitelist.js?v=20261111b, timeout=60, tag=ggy-fw-event, argument=[{tokens},{skip_wifi},{ua},{slot}]
+cron "*/10 * * * *" script-path=https://raw.githubusercontent.com/schwarzgelben/ggyfw/main/scripts/po0-firewall-whitelist.js?v=20261111c, timeout=60, tag=ggy-fw-cron, argument=[{tokens},{skip_wifi},{ua},{slot},10,{traffic_tokens}]
+network-changed script-path=https://raw.githubusercontent.com/schwarzgelben/ggyfw/main/scripts/po0-firewall-whitelist.js?v=20261111c, timeout=60, tag=ggy-fw-event, argument=[{tokens},{skip_wifi},{ua},{slot},10,{traffic_tokens}]
